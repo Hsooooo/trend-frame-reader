@@ -73,11 +73,14 @@ def sync_seed_sources(session: Session) -> dict:
         source = existing.get(row["url"])
         if source:
             changed = False
-            for key in ("type", "name", "category", "weight", "enabled"):
-                val = row[key]
-                if getattr(source, key) != val:
-                    setattr(source, key, val)
+            for key in ("type", "name", "category", "weight"):
+                if getattr(source, key) != row[key]:
+                    setattr(source, key, row[key])
                     changed = True
+            desired_enabled = row.get("enabled", True)
+            if source.enabled != desired_enabled:
+                source.enabled = desired_enabled
+                changed = True
             if changed:
                 updated += 1
             continue
