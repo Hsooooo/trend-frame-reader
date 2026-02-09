@@ -1,0 +1,9 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+SQLAlchemy==2.0.44
+psycopg2-binary==2.9.10
+httpx==0.28.1
+feedparser==6.0.11
+APScheduler==3.11.0
+pydantic-settings==2.11.0
+python-dotenv==1.1.1
