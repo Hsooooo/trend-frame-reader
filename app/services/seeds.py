@@ -7,6 +7,7 @@ from app.models import Source, SourceType
 
 DEFAULT_SOURCES: list[dict] = [
     {"type": SourceType.HN, "name": "Hacker News", "url": "https://news.ycombinator.com/", "category": "tech", "weight": 1.1},
+    {"type": SourceType.RSS, "name": "OpenAI Blog", "url": "https://openai.com/blog/rss.xml", "category": "tech", "weight": 1.0},
     {"type": SourceType.RSS, "name": "BBC Top Stories", "url": "https://feeds.bbci.co.uk/news/rss.xml", "category": "world", "weight": 1.0},
     {"type": SourceType.RSS, "name": "BBC World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "category": "world", "weight": 1.0},
     {"type": SourceType.RSS, "name": "BBC Business", "url": "https://feeds.bbci.co.uk/news/business/rss.xml", "category": "business", "weight": 1.0},

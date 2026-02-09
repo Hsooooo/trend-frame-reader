@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import timedelta
 from urllib.parse import urlparse
 
@@ -45,13 +46,34 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
 
         picked = []
         used_domains = set()
+
+        by_category: dict[str, list[Item]] = defaultdict(list)
         for item in items:
-            domain = urlparse(item.canonical_url).netloc
-            if domain in used_domains:
-                continue
-            used_domains.add(domain)
-            picked.append(item)
-            if len(picked) >= settings.feed_max_items:
+            by_category[item.source.category].append(item)
+
+        # Round-robin across categories first to avoid one-category feed domination.
+        categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
+        index_map = {c: 0 for c in categories}
+
+        while len(picked) < settings.feed_max_items:
+            progressed = False
+            for category in categories:
+                idx = index_map[category]
+                bucket = by_category[category]
+                while idx < len(bucket):
+                    item = bucket[idx]
+                    idx += 1
+                    domain = urlparse(item.canonical_url).netloc
+                    if domain in used_domains:
+                        continue
+                    used_domains.add(domain)
+                    picked.append(item)
+                    progressed = True
+                    break
+                index_map[category] = idx
+                if len(picked) >= settings.feed_max_items:
+                    break
+            if not progressed:
                 break
 
         if len(picked) < settings.feed_min_items:

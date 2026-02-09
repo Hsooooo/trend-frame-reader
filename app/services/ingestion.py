@@ -67,6 +67,7 @@ def run_ingestion(db: Session) -> dict:
 
     inserted = 0
     scanned = 0
+    seen_canonical: set[str] = set()
 
     try:
         sources = db.execute(select(Source).where(Source.enabled == True)).scalars().all()  # noqa: E712
@@ -79,6 +80,8 @@ def run_ingestion(db: Session) -> dict:
             for obj in items:
                 scanned += 1
                 canonical = canonicalize_url(obj["url"])
+                if canonical in seen_canonical:
+                    continue
                 exists = db.execute(select(Item.id).where(Item.canonical_url == canonical)).scalar_one_or_none()
                 if exists:
                     continue
@@ -98,6 +101,7 @@ def run_ingestion(db: Session) -> dict:
                     score=compute_score(source.weight, obj.get("published_at")),
                 )
                 db.add(item)
+                seen_canonical.add(canonical)
                 inserted += 1
 
             source.last_fetched_at = utcnow()
