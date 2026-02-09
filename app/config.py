@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     app_timezone: str = "Asia/Seoul"
     feed_min_items: int = 3
     feed_max_items: int = 5
+    feed_max_items_per_category: int = 5
+    feed_max_items_total: int = 30
     ingestion_lookback_hours: int = 48
     title_similarity_threshold: float = 0.85
     cors_allowed_origins: str = ""

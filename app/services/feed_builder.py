@@ -41,7 +41,7 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
             select(Item)
             .where(Item.fetched_at >= cutoff)
             .order_by(desc(Item.score), desc(Item.id))
-            .limit(300)
+            .limit(max(300, settings.feed_max_items_total * 20))
         ).scalars().all()
 
         picked = []
@@ -51,30 +51,23 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
         for item in items:
             by_category[item.source.category].append(item)
 
-        # Round-robin across categories first to avoid one-category feed domination.
         categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
-        index_map = {c: 0 for c in categories}
+        per_category = max(1, settings.feed_max_items_per_category)
+        total_cap = max(per_category, settings.feed_max_items_total)
 
-        while len(picked) < settings.feed_max_items:
-            progressed = False
-            for category in categories:
-                idx = index_map[category]
-                bucket = by_category[category]
-                while idx < len(bucket):
-                    item = bucket[idx]
-                    idx += 1
-                    domain = urlparse(item.canonical_url).netloc
-                    if domain in used_domains:
-                        continue
-                    used_domains.add(domain)
-                    picked.append(item)
-                    progressed = True
-                    break
-                index_map[category] = idx
-                if len(picked) >= settings.feed_max_items:
-                    break
-            if not progressed:
+        for category in categories:
+            if len(picked) >= total_cap:
                 break
+            cat_picked = 0
+            for item in by_category[category]:
+                if cat_picked >= per_category or len(picked) >= total_cap:
+                    break
+                domain = urlparse(item.canonical_url).netloc
+                if domain in used_domains:
+                    continue
+                used_domains.add(domain)
+                picked.append(item)
+                cat_picked += 1
 
         if len(picked) < settings.feed_min_items:
             fallback = db.execute(select(Item).order_by(desc(Item.score), desc(Item.id)).limit(settings.feed_min_items)).scalars().all()
