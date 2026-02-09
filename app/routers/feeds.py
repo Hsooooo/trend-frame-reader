@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db import get_db
 from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, SlotType, Source
-from app.schemas import FeedItemOut, FeedOut, Slot
+from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 
@@ -45,6 +45,7 @@ def get_today_feed(
             item_id=item.id,
             title=item.title,
             source=source.name,
+            category=source.category,
             url=item.url,
             short_reason=feed_item.short_reason,
             rank=feed_item.rank,
@@ -53,4 +54,9 @@ def get_today_feed(
         for feed_item, item, source, action in rows
     ]
 
-    return FeedOut(feed_date=str(feed.feed_date), slot=slot, generated_at=feed.generated_at, items=items)
+    grouped: dict[str, list[FeedItemOut]] = {}
+    for item in items:
+        grouped.setdefault(item.category, []).append(item)
+
+    groups = [FeedCategoryGroup(category=cat, items=cat_items) for cat, cat_items in grouped.items()]
+    return FeedOut(feed_date=str(feed.feed_date), slot=slot, generated_at=feed.generated_at, items=items, groups=groups)

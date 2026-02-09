@@ -12,7 +12,7 @@ from app.services.utils import utcnow
 
 
 def _reason(item: Item) -> str:
-    return f"Recent from {item.source.name}"
+    return f"[{item.source.category}] Recent from {item.source.name}"
 
 
 def generate_feed_for_slot(db: Session, slot: SlotType):

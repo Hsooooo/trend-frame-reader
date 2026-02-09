@@ -29,6 +29,7 @@ class Source(Base):
     type: Mapped[SourceType] = mapped_column(SQLEnum(SourceType), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), default="general", nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
     weight: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

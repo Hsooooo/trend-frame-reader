@@ -7,13 +7,14 @@ from app.config import settings
 from sqlalchemy.exc import OperationalError
 
 from app.db import Base, engine, SessionLocal
-from app.models import SlotType, Source, SourceType
+from app.models import SlotType
 from app.routers.bookmarks import router as bookmarks_router
 from app.routers.feedback import router as feedback_router
 from app.routers.feeds import router as feeds_router
 from app.routers.health import router as health_router
 from app.services.feed_builder import generate_feed_for_slot
 from app.services.ingestion import run_ingestion
+from app.services.seeds import apply_schema_upgrades, sync_seed_sources
 from app.tasks import start_scheduler, stop_scheduler
 
 app = FastAPI(title=settings.app_name)
@@ -52,15 +53,8 @@ def on_startup():
         raise RuntimeError("database_not_ready")
 
     with SessionLocal() as db:
-        # Seed minimal sources once.
-        if db.query(Source).count() == 0:
-            db.add_all(
-                [
-                    Source(type=SourceType.HN, name="Hacker News", url="https://news.ycombinator.com/", weight=1.1),
-                    Source(type=SourceType.RSS, name="OpenAI Blog", url="https://openai.com/blog/rss.xml", weight=1.0),
-                ]
-            )
-            db.commit()
+        apply_schema_upgrades(db)
+        sync_seed_sources(db)
     start_scheduler()
 
 
