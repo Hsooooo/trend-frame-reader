@@ -3,12 +3,11 @@ from datetime import datetime
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db import get_db
 from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, SlotType, Source
 from app.schemas import FeedItemOut, FeedOut, Slot
-from app.services.feed_builder import generate_feed_for_slot
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 
@@ -23,9 +22,7 @@ def get_today_feed(
 
     feed = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot_type))).scalar_one_or_none()
     if not feed:
-        # Auto-generate the requested slot feed when missing, so UI tabs don't fail with 404.
-        generate_feed_for_slot(db, slot_type)
-        feed = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot_type))).scalar_one_or_none()
+        raise HTTPException(status_code=404, detail="feed_not_generated")
 
     latest_feedback = (
         select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
