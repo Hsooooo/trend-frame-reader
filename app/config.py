@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     feed_max_items: int = 5
     ingestion_lookback_hours: int = 48
     title_similarity_threshold: float = 0.85
+    cors_allowed_origins: str = ""
+    admin_token: str = ""
+
+    def cors_origins(self) -> list[str]:
+        if not self.cors_allowed_origins.strip():
+            return []
+        return [x.strip() for x in self.cors_allowed_origins.split(",") if x.strip()]
 
 
 settings = Settings()

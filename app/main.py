@@ -1,6 +1,7 @@
 import time
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from sqlalchemy.exc import OperationalError
@@ -16,6 +17,26 @@ from app.services.ingestion import run_ingestion
 from app.tasks import start_scheduler, stop_scheduler
 
 app = FastAPI(title=settings.app_name)
+
+allowed_origins = settings.cors_origins()
+if allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+def require_admin_token(authorization: str | None = Header(default=None)):
+    token = settings.admin_token.strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="admin_token_not_configured")
+
+    expected = f"Bearer {token}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 @app.on_event("startup")
@@ -49,13 +70,13 @@ def on_shutdown():
 
 
 @app.post("/admin/run-ingestion")
-def admin_run_ingestion():
+def admin_run_ingestion(_: None = Depends(require_admin_token)):
     with SessionLocal() as db:
         return run_ingestion(db)
 
 
 @app.post("/admin/generate-feed/{slot}")
-def admin_generate_feed(slot: str):
+def admin_generate_feed(slot: str, _: None = Depends(require_admin_token)):
     slot_l = slot.lower()
     if slot_l not in {"am", "pm"}:
         return {"error": "invalid_slot", "allowed": ["am", "pm"]}

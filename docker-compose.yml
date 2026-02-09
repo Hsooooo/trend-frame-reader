@@ -22,6 +22,8 @@ services:
       APP_TIMEZONE: Asia/Seoul
       FEED_MIN_ITEMS: "3"
       FEED_MAX_ITEMS: "5"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
     ports:
       - "8000:8000"
     depends_on:
