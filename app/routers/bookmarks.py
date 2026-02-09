@@ -18,12 +18,12 @@ def get_bookmarks(db: Session = Depends(get_db)):
     )
 
     rows = db.execute(
-        select(Item, Source)
+        select(Item, Source, Feedback.created_at)
         .join(latest_feedback, latest_feedback.c.item_id == Item.id)
         .join(Feedback, Feedback.id == latest_feedback.c.max_id)
         .join(Source, Item.source_id == Source.id)
         .where(Feedback.action == FeedbackAction.SAVED)
-        .order_by(Item.id.desc())
+        .order_by(Feedback.created_at.desc(), Item.id.desc())
     ).all()
 
     return {
@@ -34,7 +34,8 @@ def get_bookmarks(db: Session = Depends(get_db)):
                 "url": item.url,
                 "source": source.name,
                 "saved": True,
+                "saved_at": saved_at,
             }
-            for item, source in rows
+            for item, source, saved_at in rows
         ]
     }
