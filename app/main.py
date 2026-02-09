@@ -1,6 +1,10 @@
+import time
+
 from fastapi import FastAPI
 
 from app.config import settings
+from sqlalchemy.exc import OperationalError
+
 from app.db import Base, engine, SessionLocal
 from app.models import SlotType, Source, SourceType
 from app.routers.bookmarks import router as bookmarks_router
@@ -16,7 +20,16 @@ app = FastAPI(title=settings.app_name)
 
 @app.on_event("startup")
 def on_startup():
-    Base.metadata.create_all(bind=engine)
+    # Wait briefly for DB readiness to avoid race on container startup.
+    for _ in range(20):
+        try:
+            Base.metadata.create_all(bind=engine)
+            break
+        except OperationalError:
+            time.sleep(1)
+    else:
+        raise RuntimeError("database_not_ready")
+
     with SessionLocal() as db:
         # Seed minimal sources once.
         if db.query(Source).count() == 0:
