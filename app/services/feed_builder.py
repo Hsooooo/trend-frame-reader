@@ -19,6 +19,29 @@ def _reason(item: Item) -> str:
     return f"[{item.source.category}] Recent from {item.source.name}"
 
 
+def _pick_next_item(
+    items: list[Item],
+    cursor: int,
+    used_domains: set[str],
+):
+    idx = cursor
+    fallback_idx = None
+    fallback_item = None
+    while idx < len(items):
+        item = items[idx]
+        domain = urlparse(item.canonical_url).netloc
+        if domain not in used_domains:
+            return idx + 1, item
+        if fallback_item is None:
+            fallback_idx = idx
+            fallback_item = item
+        idx += 1
+    if fallback_item is not None and fallback_idx is not None:
+        # Degrade path: allow duplicate domains when diversity blocks minimum fill.
+        return fallback_idx + 1, fallback_item
+    return idx, None
+
+
 def generate_feed_for_slot(db: Session, slot: SlotType):
     started = utcnow()
     job = Job(job_type=f"feed_generation_{slot.value}", started_at=started, status="running")
@@ -55,22 +78,41 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
             by_category[item.source.category].append(item)
 
         categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
-        per_category = max(1, settings.feed_max_items_per_category)
-        total_cap = max(per_category, settings.feed_max_items_total)
+        target_per_category = max(1, settings.feed_target_items_per_category)
+        per_category_cap = max(target_per_category, settings.feed_max_items_per_category)
+        total_cap = max(per_category_cap, settings.feed_max_items_total)
+        cat_counts = {cat: 0 for cat in categories}
+        cat_cursor = {cat: 0 for cat in categories}
 
-        for category in categories:
-            if len(picked) >= total_cap:
-                break
-            cat_picked = 0
-            for item in by_category[category]:
-                if cat_picked >= per_category or len(picked) >= total_cap:
+        # Pass 1: spread across categories first, aiming for target_per_category.
+        for _ in range(target_per_category):
+            for category in categories:
+                if len(picked) >= total_cap:
                     break
-                domain = urlparse(item.canonical_url).netloc
-                if domain in used_domains:
+                cat_cursor[category], item = _pick_next_item(
+                    by_category[category],
+                    cat_cursor[category],
+                    used_domains,
+                )
+                if not item:
                     continue
-                used_domains.add(domain)
+                used_domains.add(urlparse(item.canonical_url).netloc)
                 picked.append(item)
-                cat_picked += 1
+                cat_counts[category] += 1
+
+        # Pass 2: fill remaining capacity up to per-category hard cap.
+        for category in categories:
+            while cat_counts[category] < per_category_cap and len(picked) < total_cap:
+                cat_cursor[category], item = _pick_next_item(
+                    by_category[category],
+                    cat_cursor[category],
+                    used_domains,
+                )
+                if not item:
+                    break
+                used_domains.add(urlparse(item.canonical_url).netloc)
+                picked.append(item)
+                cat_counts[category] += 1
 
         if len(picked) < settings.feed_min_items:
             fallback = db.execute(select(Item).order_by(desc(Item.score), desc(Item.id)).limit(settings.feed_min_items)).scalars().all()
