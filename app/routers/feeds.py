@@ -1,15 +1,18 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.config import settings
 from app.db import get_db
 from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, SlotType, Source
 from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
+APP_TZ = ZoneInfo(settings.app_timezone)
 
 
 @router.get("/today", response_model=FeedOut)
@@ -17,7 +20,7 @@ def get_today_feed(
     slot: Slot = Query(...),
     db: Session = Depends(get_db),
 ):
-    today = datetime.now().date()
+    today = datetime.now(APP_TZ).date()
     slot_type = SlotType.AM if slot == Slot.am else SlotType.PM
 
     feed = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot_type))).scalar_one_or_none()

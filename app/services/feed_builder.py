@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 from sqlalchemy import and_, delete, desc, select
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Feed, FeedItem, Item, Job, SlotType
 from app.services.utils import utcnow
+
+APP_TZ = ZoneInfo(settings.app_timezone)
 
 
 def _reason(item: Item) -> str:
@@ -24,7 +27,7 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
 
     try:
         now = utcnow()
-        today = now.date()
+        today = now.astimezone(APP_TZ).date()
 
         existing = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot))).scalar_one_or_none()
         if existing:
