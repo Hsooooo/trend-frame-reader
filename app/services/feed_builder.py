@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import timedelta
+import random
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
-from sqlalchemy import and_, delete, desc, select
+from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Feed, FeedItem, Item, Job, SlotType
+from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, Job, SlotType
 from app.services.utils import utcnow
 
 APP_TZ = ZoneInfo(settings.app_timezone)
@@ -62,10 +63,21 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
             db.add(feed)
             db.flush()
 
+        latest_feedback = (
+            select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
+            .group_by(Feedback.item_id)
+            .subquery()
+        )
+        excluded_items = (
+            select(Feedback.item_id)
+            .join(latest_feedback, Feedback.id == latest_feedback.c.max_id)
+            .where(Feedback.action.in_([FeedbackAction.SAVED, FeedbackAction.SKIPPED]))
+        )
+
         cutoff = now - timedelta(hours=settings.ingestion_lookback_hours)
         items = db.execute(
             select(Item)
-            .where(Item.fetched_at >= cutoff)
+            .where(Item.fetched_at >= cutoff, Item.id.not_in(excluded_items))
             .order_by(desc(Item.score), desc(Item.id))
             .limit(max(300, settings.feed_max_items_total * 20))
         ).scalars().all()
@@ -76,6 +88,10 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
         by_category: dict[str, list[Item]] = defaultdict(list)
         for item in items:
             by_category[item.source.category].append(item)
+
+        rng = random.Random()
+        for cat_items in by_category.values():
+            rng.shuffle(cat_items)
 
         categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
         target_per_category = max(1, settings.feed_target_items_per_category)

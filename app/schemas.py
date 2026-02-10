@@ -18,6 +18,8 @@ class FeedItemOut(BaseModel):
     short_reason: str
     rank: int
     saved: bool
+    skipped: bool
+    feedback_action: str | None = None
 
 
 class FeedCategoryGroup(BaseModel):

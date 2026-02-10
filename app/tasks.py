@@ -10,6 +10,7 @@ from app.services.feed_builder import generate_feed_for_slot
 from app.services.ingestion import run_ingestion
 
 scheduler = BackgroundScheduler(timezone=ZoneInfo(settings.app_timezone))
+APP_TZ = ZoneInfo(settings.app_timezone)
 
 
 def _ingest_job():
@@ -22,21 +23,23 @@ def _feed_job(slot: SlotType):
         generate_feed_for_slot(db, slot)
 
 
+def _hourly_refresh_job():
+    # Refresh both slots hourly from the latest ingested item pool.
+    with SessionLocal() as db:
+        generate_feed_for_slot(db, SlotType.AM)
+    with SessionLocal() as db:
+        generate_feed_for_slot(db, SlotType.PM)
+
+
 def start_scheduler():
     if scheduler.running:
         return
 
     scheduler.add_job(_ingest_job, "interval", minutes=30, id="ingestion_30m", replace_existing=True)
     scheduler.add_job(
-        lambda: _feed_job(SlotType.AM),
-        CronTrigger(hour=7, minute=30, timezone=ZoneInfo(settings.app_timezone)),
-        id="feed_am",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        lambda: _feed_job(SlotType.PM),
-        CronTrigger(hour=21, minute=30, timezone=ZoneInfo(settings.app_timezone)),
-        id="feed_pm",
+        _hourly_refresh_job,
+        CronTrigger(minute=5, timezone=APP_TZ),
+        id="feed_hourly_refresh",
         replace_existing=True,
     )
     scheduler.start()

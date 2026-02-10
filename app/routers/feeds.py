@@ -53,6 +53,8 @@ def get_today_feed(
             short_reason=feed_item.short_reason,
             rank=feed_item.rank,
             saved=(action == FeedbackAction.SAVED),
+            skipped=(action == FeedbackAction.SKIPPED),
+            feedback_action=action.value if action else None,
         )
         for feed_item, item, source, action in rows
     ]
