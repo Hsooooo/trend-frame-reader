@@ -28,7 +28,7 @@ uvicorn app.main:app --reload
 - `POST /admin/generate-feed/am|pm` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `GET /feeds/today?slot=am|pm`
 - `POST /feedback` with `{ "item_id": 1, "action": "saved" }`
-- `GET /bookmarks`
+- `GET /bookmarks?page=1&size=20`
 
 ## Environment
 - `CORS_ALLOWED_ORIGINS`: comma-separated origins. Example: `https://your-app.vercel.app`
