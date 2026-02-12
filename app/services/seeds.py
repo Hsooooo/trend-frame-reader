@@ -95,6 +95,8 @@ def apply_schema_upgrades(session: Session) -> None:
     session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS source_id INTEGER"))
     session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS category VARCHAR(64)"))
     session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS feed_id INTEGER"))
+    # Normalize historical enum-name rows (e.g. SAVED/SKIPPED) to lowercase values.
+    session.execute(text("UPDATE feedback SET action = lower(action) WHERE action <> lower(action)"))
     session.execute(
         text(
             """
