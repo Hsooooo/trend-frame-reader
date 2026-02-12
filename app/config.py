@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     feed_max_items_total: int = 30
     ingestion_lookback_hours: int = 48
     title_similarity_threshold: float = 0.85
+    deepl_api_key: str = ""
+    deepl_api_url: str = "https://api-free.deepl.com/v2/translate"
+    deepl_timeout_seconds: float = 6.0
+    deepl_retries: int = 1
     cors_allowed_origins: str = ""
     admin_token: str = ""
 

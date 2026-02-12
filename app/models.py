@@ -15,6 +15,8 @@ class SourceType(str, Enum):
 class FeedbackAction(str, Enum):
     SAVED = "saved"
     SKIPPED = "skipped"
+    LIKED = "liked"
+    DISLIKED = "disliked"
 
 
 class SlotType(str, Enum):
@@ -43,6 +45,7 @@ class Item(Base):
     canonical_url: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
+    translated_title_ko: Mapped[str | None] = mapped_column(String(512), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
     language: Mapped[str] = mapped_column(String(8), default="en", nullable=False)
@@ -78,7 +81,31 @@ class Feedback(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
-    action: Mapped[FeedbackAction] = mapped_column(SQLEnum(FeedbackAction), nullable=False)
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
+
+
+class ItemEventType(str, Enum):
+    IMPRESSION = "impression"
+    CLICK = "click"
+
+
+class ItemEvent(Base):
+    __tablename__ = "item_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id"), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
 

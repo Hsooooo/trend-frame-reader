@@ -10,7 +10,8 @@ from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, Job, SlotType
+from app.models import Feedback, Feed, FeedItem, Item, Job, SlotType
+from app.services.events import CURATION_ACTIONS
 from app.services.utils import utcnow
 
 APP_TZ = ZoneInfo(settings.app_timezone)
@@ -65,13 +66,13 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
 
         latest_feedback = (
             select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
+            .where(Feedback.action.in_(list(CURATION_ACTIONS)))
             .group_by(Feedback.item_id)
             .subquery()
         )
         excluded_items = (
             select(Feedback.item_id)
             .join(latest_feedback, Feedback.id == latest_feedback.c.max_id)
-            .where(Feedback.action.in_([FeedbackAction.SAVED, FeedbackAction.SKIPPED]))
         )
 
         cutoff = now - timedelta(hours=settings.ingestion_lookback_hours)

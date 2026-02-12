@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Item, Job, Source, SourceType
 from app.services.ranking import compute_score
+from app.services.translation import translate_title_to_korean
 from app.services.utils import canonicalize_url, detect_language, title_key, utcnow
 
 
@@ -89,14 +90,20 @@ def run_ingestion(db: Session) -> dict:
                 if _is_similar_title(db, obj["title"]):
                     continue
 
+                language = detect_language(obj["title"])
+                translated_title_ko = None
+                if language != "ko":
+                    translated_title_ko = translate_title_to_korean(obj["title"])
+
                 item = Item(
                     source_id=source.id,
                     canonical_url=canonical,
                     url=obj["url"],
                     title=obj["title"],
+                    translated_title_ko=translated_title_ko,
                     published_at=obj.get("published_at"),
                     fetched_at=utcnow(),
-                    language=detect_language(obj["title"]),
+                    language=language,
                     dedupe_key=title_key(obj["title"]),
                     score=compute_score(source.weight, obj.get("published_at")),
                 )

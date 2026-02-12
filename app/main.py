@@ -1,6 +1,6 @@
 import time
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -8,10 +8,13 @@ from sqlalchemy.exc import OperationalError
 
 from app.db import Base, engine, SessionLocal
 from app.models import SlotType
+from app.routers.admin import router as admin_router
 from app.routers.bookmarks import router as bookmarks_router
+from app.routers.events import router as events_router
 from app.routers.feedback import router as feedback_router
 from app.routers.feeds import router as feeds_router
 from app.routers.health import router as health_router
+from app.security import require_admin_token
 from app.services.feed_builder import generate_feed_for_slot
 from app.services.ingestion import run_ingestion
 from app.services.seeds import apply_schema_upgrades, sync_seed_sources
@@ -28,17 +31,6 @@ if allowed_origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-
-def require_admin_token(authorization: str | None = Header(default=None)):
-    token = settings.admin_token.strip()
-    if not token:
-        raise HTTPException(status_code=503, detail="admin_token_not_configured")
-
-    expected = f"Bearer {token}"
-    if authorization != expected:
-        raise HTTPException(status_code=401, detail="unauthorized")
-
 
 @app.on_event("startup")
 def on_startup():
@@ -84,3 +76,5 @@ app.include_router(health_router)
 app.include_router(feeds_router)
 app.include_router(feedback_router)
 app.include_router(bookmarks_router)
+app.include_router(events_router)
+app.include_router(admin_router)

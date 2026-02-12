@@ -67,6 +67,56 @@ def apply_schema_upgrades(session: Session) -> None:
     session.execute(
         text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS category VARCHAR(64) NOT NULL DEFAULT 'general'")
     )
+    session.execute(
+        text("ALTER TABLE items ADD COLUMN IF NOT EXISTS translated_title_ko VARCHAR(512)")
+    )
+    session.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'feedback'
+                      AND column_name = 'action'
+                      AND data_type = 'USER-DEFINED'
+                ) THEN
+                    ALTER TABLE feedback
+                    ALTER COLUMN action TYPE VARCHAR(32)
+                    USING action::text;
+                END IF;
+            END $$;
+            """
+        )
+    )
+    session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS slot VARCHAR(8)"))
+    session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS rank INTEGER"))
+    session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS source_id INTEGER"))
+    session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS category VARCHAR(64)"))
+    session.execute(text("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS feed_id INTEGER"))
+    session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS item_events (
+                id SERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL REFERENCES items(id),
+                event_type VARCHAR(32) NOT NULL,
+                slot VARCHAR(8),
+                rank INTEGER,
+                source_id INTEGER REFERENCES sources(id),
+                category VARCHAR(64),
+                feed_id INTEGER REFERENCES feeds(id),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+    )
+    session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS idx_item_events_type_created_at ON item_events(event_type, created_at)"
+        )
+    )
     session.commit()
 
 

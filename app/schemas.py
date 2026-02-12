@@ -12,6 +12,7 @@ class Slot(str, Enum):
 class FeedItemOut(BaseModel):
     item_id: int
     title: str
+    translated_title_ko: str | None = None
     source: str
     category: str
     url: str
@@ -19,6 +20,10 @@ class FeedItemOut(BaseModel):
     rank: int
     saved: bool
     skipped: bool
+    liked: bool
+    disliked: bool
+    curation_action: str | None = None
+    preference_action: str | None = None
     feedback_action: str | None = None
 
 
@@ -38,6 +43,21 @@ class FeedOut(BaseModel):
 class FeedbackIn(BaseModel):
     item_id: int
     action: str
+
+
+class ClickEventIn(BaseModel):
+    item_id: int
+
+
+class MetricsOut(BaseModel):
+    date_from: str
+    date_to: str
+    impressions: int
+    clicks: int
+    generated_slots: int
+    opened_slots: int
+    ctr: float
+    slot_open_rate: float
 
 
 class HealthOut(BaseModel):
