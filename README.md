@@ -27,6 +27,8 @@ uvicorn app.main:app --reload
 - `POST /admin/run-ingestion` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `POST /admin/generate-feed/am|pm` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `GET /admin/metrics?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
+- `GET /admin/keyword-sentiments?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&min_feedback=2&limit=50` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
+- `POST /admin/backfill-keywords` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `GET /feeds/today?slot=am|pm`
 - `POST /feedback` with `{ "item_id": 1, "action": "saved|skipped|liked|disliked" }`
 - `POST /events/click` with `{ "item_id": 1 }`

@@ -8,7 +8,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Item, Job, Source, SourceType
+from app.models import Item, ItemKeyword, Job, Source, SourceType
+from app.services.keywords import extract_keywords, build_keyword_text
 from app.services.ranking import compute_score
 from app.services.translation import translate_title_to_korean
 from app.services.utils import canonicalize_url, detect_language, title_key, utcnow
@@ -37,6 +38,11 @@ def _fetch_hn_items(limit: int = 80) -> list[dict]:
     return out
 
 
+def _strip_html(text: str) -> str:
+    import re
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
 def _fetch_rss_items(url: str, limit: int = 50) -> list[dict]:
     feed = feedparser.parse(url)
     out = []
@@ -45,7 +51,9 @@ def _fetch_rss_items(url: str, limit: int = 50) -> list[dict]:
         title = e.get("title")
         if not link or not title:
             continue
-        out.append({"title": title, "url": link, "published_at": None})
+        summary_raw = e.get("summary", "") or ""
+        summary = _strip_html(summary_raw) if summary_raw else None
+        out.append({"title": title, "url": link, "published_at": None, "summary": summary})
     return out
 
 
@@ -101,6 +109,7 @@ def run_ingestion(db: Session) -> dict:
                     url=obj["url"],
                     title=obj["title"],
                     translated_title_ko=translated_title_ko,
+                    summary=obj.get("summary"),
                     published_at=obj.get("published_at"),
                     fetched_at=utcnow(),
                     language=language,
@@ -108,6 +117,16 @@ def run_ingestion(db: Session) -> dict:
                     score=compute_score(source.weight, obj.get("published_at")),
                 )
                 db.add(item)
+                db.flush()
+
+                kw_text = build_keyword_text(obj["title"], obj.get("summary"))
+                for kw in extract_keywords(kw_text):
+                    db.add(ItemKeyword(
+                        item_id=item.id,
+                        keyword=kw["keyword"],
+                        relevance_score=kw["score"],
+                    ))
+
                 seen_canonical.add(canonical)
                 inserted += 1
 

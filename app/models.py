@@ -50,9 +50,20 @@ class Item(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
     language: Mapped[str] = mapped_column(String(8), default="en", nullable=False)
     dedupe_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     source: Mapped[Source] = relationship()
+
+
+class ItemKeyword(Base):
+    __tablename__ = "item_keywords"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), nullable=False)
+    keyword: Mapped[str] = mapped_column(String(128), nullable=False)
+    relevance_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
 
 
 class Feed(Base):

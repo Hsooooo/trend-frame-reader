@@ -60,6 +60,27 @@ class MetricsOut(BaseModel):
     slot_open_rate: float
 
 
+class KeywordSentimentItem(BaseModel):
+    keyword: str
+    liked_count: int
+    disliked_count: int
+    total_items: int
+    sentiment_score: float
+    sentiment_label: str
+
+
+class KeywordSentimentsOut(BaseModel):
+    date_from: str
+    date_to: str
+    total_keywords: int
+    keywords: list[KeywordSentimentItem]
+
+
+class BackfillResultOut(BaseModel):
+    processed: int
+    keywords_created: int
+
+
 class HealthOut(BaseModel):
     status: str
     db: str

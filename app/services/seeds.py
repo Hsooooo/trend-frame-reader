@@ -119,6 +119,28 @@ def apply_schema_upgrades(session: Session) -> None:
             "CREATE INDEX IF NOT EXISTS idx_item_events_type_created_at ON item_events(event_type, created_at)"
         )
     )
+    # Phase 2: summary field for keyword extraction
+    session.execute(text("ALTER TABLE items ADD COLUMN IF NOT EXISTS summary TEXT"))
+    # Phase 2: item_keywords table for keyword sentiment analysis
+    session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS item_keywords (
+                id SERIAL PRIMARY KEY,
+                item_id INTEGER NOT NULL REFERENCES items(id),
+                keyword VARCHAR(128) NOT NULL,
+                relevance_score FLOAT NOT NULL DEFAULT 0.0,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+    )
+    session.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_item_keywords_keyword ON item_keywords(keyword)")
+    )
+    session.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_item_keywords_item_id ON item_keywords(item_id)")
+    )
     session.commit()
 
 
