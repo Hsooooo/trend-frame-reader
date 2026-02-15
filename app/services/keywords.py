@@ -29,7 +29,7 @@ def extract_keywords(text: str, max_keywords: int = 10) -> list[dict]:
             top=max_keywords,
         )
         raw = kw_extractor.extract_keywords(text)
-        return [{"keyword": kw, "score": score} for kw, score in raw]
+        return [{"keyword": kw, "score": float(score)} for kw, score in raw]
     except Exception:
         logger.warning("keyword extraction failed", exc_info=True)
         return []
