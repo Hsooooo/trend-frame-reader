@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 
 import yake
 from kiwipiepy import Kiwi
+from openai import OpenAI
 
+from app.config import settings
 from app.services.utils import detect_language
 
 logger = logging.getLogger(__name__)
 
 # 한국어 명사 추출용 — 모듈 수준에서 한 번만 초기화
 _kiwi = Kiwi()
+_openai_client: OpenAI | None = None
+
+
+def _get_openai_client() -> OpenAI | None:
+    global _openai_client
+    if not settings.openai_api_key.strip():
+        return None
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=settings.openai_api_key.strip())
+    return _openai_client
 
 # 명사 태그: 일반명사(NNG), 고유명사(NNP)
 _KO_NOUN_TAGS = {"NNG", "NNP"}
@@ -53,11 +66,49 @@ def _extract_ko_keywords(text: str, max_keywords: int) -> list[dict]:
     ]
 
 
-def extract_keywords(text: str, max_keywords: int = 10) -> list[dict]:
+def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) -> list[dict] | None:
+    """OpenAI로 키워드 추출. 실패 시 None 반환 → fallback."""
+    client = _get_openai_client()
+    if not client:
+        return None
+
+    summary_part = f"\n요약: {summary.strip()}" if summary and summary.strip() else ""
+    prompt = (
+        f"다음 기사의 핵심 키워드 {max_keywords}개를 추출해줘.\n"
+        f"- 기술명, 제품명, 개념어, 고유명사 위주\n"
+        f"- '사용자', '정보', '기기' 같은 너무 일반적인 단어 제외\n"
+        f"- JSON 배열로만 출력 (설명 없이)\n"
+        f"\n제목: {title.strip()}{summary_part}"
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.openai_keyword_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            timeout=settings.openai_timeout_seconds,
+        )
+        raw = response.choices[0].message.content or ""
+        keywords = json.loads(raw.strip())
+        if not isinstance(keywords, list):
+            return None
+        return [
+            {"keyword": str(kw), "score": round(1 - i / max(len(keywords), 1), 4)}
+            for i, kw in enumerate(keywords[:max_keywords])
+            if str(kw).strip()
+        ]
+    except Exception:
+        logger.warning("OpenAI keyword extraction failed", exc_info=True)
+        return None
+
+
+def extract_keywords(text: str, max_keywords: int = 10, title: str = "", summary: str | None = None) -> list[dict]:
     """Extract keywords from text.
 
-    - 한국어: kiwipiepy 명사 추출 (조사 제거, 의미 단위 보장)
-    - 영어: YAKE 통계 기반 추출 (1~3gram)
+    OpenAI API 키가 설정된 경우 LLM 추출 우선 사용.
+    실패 or 키 없을 시:
+    - 한국어: kiwipiepy 명사 추출
+    - 영어: YAKE 통계 기반 추출
 
     Returns list of {"keyword": str, "score": float}.
     """
@@ -65,6 +116,13 @@ def extract_keywords(text: str, max_keywords: int = 10) -> list[dict]:
         return []
 
     try:
+        # LLM 경로 (title/summary가 있을 때 더 정확)
+        llm_input_title = title or text[:200]
+        llm_result = _extract_llm_keywords(llm_input_title, summary, max_keywords)
+        if llm_result is not None:
+            return llm_result
+
+        # Fallback: 통계 기반
         lang = detect_language(text)
 
         if lang == "ko":

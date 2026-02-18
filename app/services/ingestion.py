@@ -120,7 +120,7 @@ def run_ingestion(db: Session) -> dict:
                 db.flush()
 
                 kw_text = build_keyword_text(obj["title"], obj.get("summary"))
-                for kw in extract_keywords(kw_text):
+                for kw in extract_keywords(kw_text, title=obj["title"], summary=obj.get("summary")):
                     db.add(ItemKeyword(
                         item_id=item.id,
                         keyword=kw["keyword"],

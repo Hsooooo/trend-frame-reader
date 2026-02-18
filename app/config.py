@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     deepl_api_url: str = "https://api-free.deepl.com/v2/translate"
     deepl_timeout_seconds: float = 6.0
     deepl_retries: int = 1
+    openai_api_key: str = ""
+    openai_keyword_model: str = "gpt-4o-mini"
+    openai_timeout_seconds: float = 10.0
     cors_allowed_origins: str = ""
     admin_token: str = ""
 
