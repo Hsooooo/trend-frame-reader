@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, SlotType, Source
+from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, SlotType, Source
 from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot
 from app.services.events import CURATION_ACTIONS, PREFERENCE_ACTIONS, create_feed_impression_events
 
@@ -56,6 +56,17 @@ def get_today_feed(
         .order_by(FeedItem.rank.asc())
     ).all()
 
+    item_ids = [item.id for _, item, *_ in rows]
+    kw_map: dict[int, list[str]] = {}
+    if item_ids:
+        kw_rows = db.execute(
+            select(ItemKeyword.item_id, ItemKeyword.keyword)
+            .where(ItemKeyword.item_id.in_(item_ids))
+            .order_by(ItemKeyword.item_id, ItemKeyword.relevance_score)
+        ).all()
+        for kw_item_id, keyword in kw_rows:
+            kw_map.setdefault(kw_item_id, []).append(keyword)
+
     items = [
         FeedItemOut(
             item_id=item.id,
@@ -73,6 +84,7 @@ def get_today_feed(
             curation_action=curation_action,
             preference_action=preference_action,
             feedback_action=curation_action,
+            keywords=kw_map.get(item.id, []),
         )
         for feed_item, item, source, curation_action, preference_action in rows
     ]

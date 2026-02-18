@@ -25,6 +25,7 @@ class FeedItemOut(BaseModel):
     curation_action: str | None = None
     preference_action: str | None = None
     feedback_action: str | None = None
+    keywords: list[str] = []
 
 
 class FeedCategoryGroup(BaseModel):
