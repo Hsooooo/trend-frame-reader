@@ -89,7 +89,10 @@ def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) ->
             timeout=settings.openai_timeout_seconds,
         )
         raw = response.choices[0].message.content or ""
-        keywords = json.loads(raw.strip())
+        # 마크다운 코드블록 제거 (```json ... ``` 형태 대응)
+        raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+        raw = re.sub(r"\s*```$", "", raw).strip()
+        keywords = json.loads(raw)
         if not isinstance(keywords, list):
             return None
         return [
