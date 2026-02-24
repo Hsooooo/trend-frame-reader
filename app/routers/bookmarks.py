@@ -3,11 +3,14 @@ from math import ceil
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db import get_db
 from app.models import Feedback, FeedbackAction, Item, Source
+from app.schemas import BookmarkAskIn, BookmarkAskOut, BookmarkSource, KeywordCloudItem, KeywordCloudOut, KeywordGraphOut, KeywordNeighbor
 from app.services.events import CURATION_ACTIONS
+from app.services.graph import get_keyword_graph, get_bookmark_keyword_cloud
+from app.services.rag import ask_bookmarks
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 
@@ -59,3 +62,36 @@ def get_bookmarks(
             for item, source, saved_at in rows
         ]
     }
+
+
+@router.post("/ask", response_model=BookmarkAskOut)
+def bookmark_ask(payload: BookmarkAskIn):
+    result = ask_bookmarks(payload.query, payload.top_k)
+    return BookmarkAskOut(
+        answer=result["answer"],
+        sources=[BookmarkSource(**s) for s in result.get("sources", [])],
+    )
+
+
+@router.get("/explore", response_model=KeywordGraphOut)
+def bookmark_explore(
+    keyword: str = Query(..., min_length=1),
+    depth: int = Query(default=1, ge=1, le=3),
+):
+    result = get_keyword_graph(keyword, depth)
+    if not result:
+        raise HTTPException(status_code=404, detail="keyword_not_found")
+    return KeywordGraphOut(
+        keyword=result["keyword"],
+        doc_frequency=result.get("doc_frequency", 0),
+        bookmark_frequency=result.get("bookmark_frequency", 0),
+        sentiment_score=result.get("sentiment_score", 0.0),
+        neighbors=[KeywordNeighbor(**n) for n in result.get("neighbors", [])],
+    )
+
+
+@router.get("/keywords", response_model=KeywordCloudOut)
+def bookmark_keywords(limit: int = Query(default=30, ge=1, le=100)):
+    results = get_bookmark_keyword_cloud(limit)
+    items = [KeywordCloudItem(**r) for r in results]
+    return KeywordCloudOut(total=len(items), keywords=items)

@@ -6,25 +6,15 @@ import re
 
 import yake
 from kiwipiepy import Kiwi
-from openai import OpenAI
 
 from app.config import settings
+from app.services.openai_client import get_openai_client
 from app.services.utils import detect_language
 
 logger = logging.getLogger(__name__)
 
 # 한국어 명사 추출용 — 모듈 수준에서 한 번만 초기화
 _kiwi = Kiwi()
-_openai_client: OpenAI | None = None
-
-
-def _get_openai_client() -> OpenAI | None:
-    global _openai_client
-    if not settings.openai_api_key.strip():
-        return None
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=settings.openai_api_key.strip())
-    return _openai_client
 
 # 명사 태그: 일반명사(NNG), 고유명사(NNP)
 _KO_NOUN_TAGS = {"NNG", "NNP"}
@@ -68,7 +58,7 @@ def _extract_ko_keywords(text: str, max_keywords: int) -> list[dict]:
 
 def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) -> list[dict] | None:
     """OpenAI로 키워드 추출. 실패 시 None 반환 → fallback."""
-    client = _get_openai_client()
+    client = get_openai_client()
     if not client:
         return None
 

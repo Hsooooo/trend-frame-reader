@@ -85,3 +85,50 @@ class BackfillResultOut(BaseModel):
 class HealthOut(BaseModel):
     status: str
     db: str
+
+
+class BookmarkAskIn(BaseModel):
+    query: str
+    top_k: int = 5
+
+
+class BookmarkSource(BaseModel):
+    item_id: int
+    title: str
+    url: str
+    similarity: float
+
+
+class BookmarkAskOut(BaseModel):
+    answer: str
+    sources: list[BookmarkSource]
+
+
+class KeywordNeighbor(BaseModel):
+    keyword: str
+    count: int
+    doc_frequency: int = 0
+
+
+class KeywordGraphOut(BaseModel):
+    keyword: str
+    doc_frequency: int = 0
+    bookmark_frequency: int = 0
+    sentiment_score: float = 0.0
+    neighbors: list[KeywordNeighbor]
+
+
+class KeywordCloudItem(BaseModel):
+    keyword: str
+    frequency: int
+    sentiment_score: float = 0.0
+
+
+class KeywordCloudOut(BaseModel):
+    total: int
+    keywords: list[KeywordCloudItem]
+
+
+class GraphBackfillOut(BaseModel):
+    items_processed: int
+    status: str

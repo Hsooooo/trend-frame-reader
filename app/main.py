@@ -48,11 +48,24 @@ def on_startup():
         apply_schema_upgrades(db)
         sync_seed_sources(db)
     start_scheduler()
+    try:
+        from app.mongo import get_mongo_client, ensure_indexes
+        if get_mongo_client():
+            ensure_indexes()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("MongoDB startup failed (non-fatal): %s", exc)
 
 
 @app.on_event("shutdown")
 def on_shutdown():
     stop_scheduler()
+    try:
+        from app.mongo import close_mongo_client
+        close_mongo_client()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("MongoDB shutdown error (non-fatal): %s", exc)
 
 
 @app.post("/admin/run-ingestion")

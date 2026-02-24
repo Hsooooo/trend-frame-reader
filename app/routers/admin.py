@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.config import settings
 from app.db import get_db
 from app.models import Feedback, Feed, Item, ItemEvent, ItemEventType, ItemKeyword
-from app.schemas import BackfillResultOut, KeywordSentimentItem, KeywordSentimentsOut, MetricsOut
+from app.schemas import BackfillResultOut, GraphBackfillOut, KeywordSentimentItem, KeywordSentimentsOut, MetricsOut
+from app.services.graph import backfill_graph
 from app.security import require_admin_token
 from app.services.keywords import build_keyword_text, extract_keywords
 
@@ -196,3 +197,13 @@ def backfill_keywords(
 
     db.commit()
     return BackfillResultOut(processed=processed, keywords_created=keywords_created)
+
+
+@router.post("/backfill-graph", response_model=GraphBackfillOut)
+def admin_backfill_graph(
+    _: None = Depends(require_admin_token),
+    db: Session = Depends(get_db),
+):
+    """Backfill MongoDB knowledge graph from existing bookmarks."""
+    result = backfill_graph(db)
+    return GraphBackfillOut(**result)

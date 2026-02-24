@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = 10.0
     cors_allowed_origins: str = ""
     admin_token: str = ""
+    mongodb_uri: str = ""
+    mongodb_database: str = "trend_frame_graph"
+    openai_embedding_model: str = "text-embedding-3-small"
+    rag_top_k: int = 5
+    graph_backfill_batch_size: int = 50
 
     def cors_origins(self) -> list[str]:
         if not self.cors_allowed_origins.strip():
