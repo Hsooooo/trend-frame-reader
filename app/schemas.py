@@ -172,3 +172,46 @@ class TimelineArticle(BaseModel):
 
 class TimelineOut(BaseModel):
     articles: list[TimelineArticle]
+
+
+class InsightPostOut(BaseModel):
+    slug: str
+    title: str
+    summary: str | None = None
+    body: str | None = None
+    period_start: str
+    period_end: str
+    published_at: datetime | None = None
+
+
+class InsightPostAdminOut(BaseModel):
+    id: int
+    slug: str
+    title: str
+    summary: str | None = None
+    body: str | None = None
+    status: str
+    period_start: str
+    period_end: str
+    created_at: datetime
+    published_at: datetime | None = None
+
+
+class InsightDraftIn(BaseModel):
+    days: int = Field(default=7, ge=1, le=90)
+
+
+class InsightPatchIn(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    body: str | None = None
+
+
+class InsightListOut(BaseModel):
+    total: int
+    posts: list[InsightPostOut]
+
+
+class InsightAdminListOut(BaseModel):
+    total: int
+    posts: list[InsightPostAdminOut]
