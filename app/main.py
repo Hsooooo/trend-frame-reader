@@ -12,6 +12,7 @@ from app.routers.admin import router as admin_router
 from app.routers.auth import router as auth_router
 from app.routers.bookmarks import router as bookmarks_router
 from app.routers.events import router as events_router
+from app.routers.insights import router as insights_router
 from app.routers.feedback import router as feedback_router
 from app.routers.feeds import router as feeds_router
 from app.routers.health import router as health_router
@@ -92,4 +93,5 @@ app.include_router(feeds_router)
 app.include_router(feedback_router)
 app.include_router(bookmarks_router)
 app.include_router(events_router)
+app.include_router(insights_router)
 app.include_router(admin_router)

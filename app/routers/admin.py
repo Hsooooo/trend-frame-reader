@@ -8,9 +8,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, Feed, Item, ItemEvent, ItemEventType, ItemKeyword, User
-from app.schemas import BackfillResultOut, GraphBackfillOut, KeywordSentimentItem, KeywordSentimentsOut, MetricsOut
+from app.models import Feedback, Feed, InsightPost, Item, ItemEvent, ItemEventType, ItemKeyword, User
+from app.schemas import (
+    BackfillResultOut,
+    GraphBackfillOut,
+    InsightAdminListOut,
+    InsightDraftIn,
+    InsightPatchIn,
+    InsightPostAdminOut,
+    KeywordSentimentItem,
+    KeywordSentimentsOut,
+    MetricsOut,
+)
 from app.services.graph import backfill_graph
+from app.services.insights import generate_draft, publish_post, unpublish_post
+from app.services.keyword_embeddings import backfill_keyword_embeddings
+from app.mongo import get_keywords_collection
 from app.security import get_current_user, require_owner
 from app.services.keywords import build_keyword_text, extract_keywords
 
@@ -207,3 +220,102 @@ def admin_backfill_graph(
     """Backfill MongoDB knowledge graph from existing bookmarks."""
     result = backfill_graph(db)
     return GraphBackfillOut(**result)
+
+
+def _post_to_admin_out(post: InsightPost) -> InsightPostAdminOut:
+    return InsightPostAdminOut(
+        id=post.id,
+        slug=post.slug,
+        title=post.title,
+        summary=post.summary,
+        body=post.body,
+        status=post.status,
+        period_start=str(post.period_start),
+        period_end=str(post.period_end),
+        created_at=post.created_at,
+        published_at=post.published_at,
+    )
+
+
+@router.get("/insights/posts", response_model=InsightAdminListOut)
+def admin_list_insight_posts(
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    posts = db.execute(
+        select(InsightPost).order_by(InsightPost.created_at.desc())
+    ).scalars().all()
+    return InsightAdminListOut(
+        total=len(posts),
+        posts=[_post_to_admin_out(p) for p in posts],
+    )
+
+
+@router.post("/insights/draft", response_model=InsightPostAdminOut)
+def admin_create_insight_draft(
+    body: InsightDraftIn = InsightDraftIn(),
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    post = generate_draft(db, days=body.days)
+    return _post_to_admin_out(post)
+
+
+@router.patch("/insights/posts/{post_id}", response_model=InsightPostAdminOut)
+def admin_patch_insight_post(
+    post_id: int,
+    patch: InsightPatchIn,
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    post = db.get(InsightPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="post_not_found")
+    if patch.title is not None:
+        post.title = patch.title
+    if patch.summary is not None:
+        post.summary = patch.summary
+    if patch.body is not None:
+        post.body = patch.body
+    db.commit()
+    db.refresh(post)
+    return _post_to_admin_out(post)
+
+
+@router.post("/insights/posts/{post_id}/publish", response_model=InsightPostAdminOut)
+def admin_publish_insight_post(
+    post_id: int,
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    try:
+        post = publish_post(db, post_id)
+    except ValueError as e:
+        detail = str(e)
+        status = 404 if detail == "post_not_found" else 400
+        raise HTTPException(status_code=status, detail=detail)
+    return _post_to_admin_out(post)
+
+
+@router.post("/insights/posts/{post_id}/unpublish", response_model=InsightPostAdminOut)
+def admin_unpublish_insight_post(
+    post_id: int,
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    try:
+        post = unpublish_post(db, post_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _post_to_admin_out(post)
+
+
+@router.post("/keywords/backfill-embeddings")
+def admin_backfill_keyword_embeddings(
+    _: User = Depends(require_owner),
+):
+    keywords_col = get_keywords_collection()
+    if keywords_col is None:
+        raise HTTPException(status_code=503, detail="mongodb_not_configured")
+    result = backfill_keyword_embeddings(keywords_col)
+    return result
