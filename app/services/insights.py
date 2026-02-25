@@ -25,6 +25,7 @@ MIN_BODY_LEN = 200
 TOP_K_KEYWORDS = 30
 TOP_CTR_ITEMS = 5
 MIN_IMPRESSIONS_FOR_CTR = 3
+TOP_CLUSTER_ARTICLES_PER_LANGUAGE = 5
 
 
 def _make_slug(db: Session, period_end: date) -> str:
@@ -94,7 +95,57 @@ def _get_cluster_articles(
     if not keywords:
         return {"en_articles": [], "ko_articles": []}
 
-    stmt = (
+    def _fetch_language_articles(language: str) -> list[dict]:
+        stmt = (
+            select(Item, Source.name.label("source_name"))
+            .join(ItemKeyword, ItemKeyword.item_id == Item.id)
+            .join(Source, Source.id == Item.source_id)
+            .where(
+                ItemKeyword.keyword.in_(keywords),
+                Item.published_at >= start_dt,
+                Item.published_at < end_dt,
+                Item.language == language,
+            )
+            .order_by(Item.published_at.desc(), Item.id.desc())
+            .distinct()
+            .limit(TOP_CLUSTER_ARTICLES_PER_LANGUAGE)
+        )
+        rows = db.execute(stmt).all()
+        articles: list[dict] = []
+        for item, source_name in rows:
+            liked = db.execute(
+                select(func.count()).select_from(Feedback).where(
+                    Feedback.item_id == item.id,
+                    Feedback.action == FeedbackAction.LIKED,
+                )
+            ).scalar_one()
+            disliked = db.execute(
+                select(func.count()).select_from(Feedback).where(
+                    Feedback.item_id == item.id,
+                    Feedback.action == FeedbackAction.DISLIKED,
+                )
+            ).scalar_one()
+
+            if liked > disliked:
+                sentiment_label = "👍"
+            elif disliked > liked:
+                sentiment_label = "👎"
+            else:
+                sentiment_label = ""
+
+            articles.append({
+                "title": item.translated_title_ko or item.title,
+                "url": item.url,
+                "source": source_name,
+                "sentiment_label": sentiment_label,
+            })
+        return articles
+
+    en_articles = _fetch_language_articles("en")
+    ko_articles = _fetch_language_articles("ko")
+
+    # Keep historical behavior for any non en/ko rows by counting them as en-side.
+    other_stmt = (
         select(Item, Source.name.label("source_name"))
         .join(ItemKeyword, ItemKeyword.item_id == Item.id)
         .join(Source, Source.id == Item.source_id)
@@ -102,15 +153,14 @@ def _get_cluster_articles(
             ItemKeyword.keyword.in_(keywords),
             Item.published_at >= start_dt,
             Item.published_at < end_dt,
+            Item.language.not_in(["en", "ko"]),
         )
+        .order_by(Item.published_at.desc(), Item.id.desc())
         .distinct()
-        .limit(10)
+        .limit(TOP_CLUSTER_ARTICLES_PER_LANGUAGE)
     )
-    rows = db.execute(stmt).all()
-
-    en_articles = []
-    ko_articles = []
-    for item, source_name in rows:
+    other_rows = db.execute(other_stmt).all()
+    for item, source_name in other_rows:
         # Get sentiment from feedback
         liked = db.execute(
             select(func.count()).select_from(Feedback).where(
@@ -132,17 +182,12 @@ def _get_cluster_articles(
         else:
             sentiment_label = ""
 
-        article = {
+        en_articles.append({
             "title": item.translated_title_ko or item.title,
             "url": item.url,
             "source": source_name,
             "sentiment_label": sentiment_label,
-        }
-
-        if item.language == "ko":
-            ko_articles.append(article)
-        else:
-            en_articles.append(article)
+        })
 
     return {"en_articles": en_articles, "ko_articles": ko_articles}
 
