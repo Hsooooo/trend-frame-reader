@@ -10,21 +10,23 @@ from app.services.openai_client import get_openai_client
 logger = logging.getLogger(__name__)
 
 
-def search_similar_bookmarks(query_embedding: list[float], top_k: int = 5) -> list[dict]:
+def search_similar_bookmarks(query_embedding: list[float], top_k: int = 5, user_id: int | None = None) -> list[dict]:
     collection = get_articles_collection()
     if collection is None:
         return []
 
+    vector_search: dict = {
+        "index": "vector_index",
+        "path": "embedding",
+        "queryVector": query_embedding,
+        "numCandidates": top_k * 10,
+        "limit": top_k,
+    }
+    if user_id is not None:
+        vector_search["filter"] = {"user_id": {"$eq": user_id}}
+
     pipeline = [
-        {
-            "$vectorSearch": {
-                "index": "vector_index",
-                "path": "embedding",
-                "queryVector": query_embedding,
-                "numCandidates": top_k * 10,
-                "limit": top_k,
-            }
-        },
+        {"$vectorSearch": vector_search},
         {
             "$project": {
                 "item_id": 1,
@@ -94,14 +96,14 @@ def generate_rag_answer(query: str, context: str) -> str:
         return "답변 생성에 실패했습니다."
 
 
-def ask_bookmarks(query: str, top_k: int | None = None) -> dict:
+def ask_bookmarks(query: str, top_k: int | None = None, user_id: int | None = None) -> dict:
     top_k = top_k or settings.rag_top_k
 
     embedding = generate_embedding(query)
     if embedding is None:
         return {"answer": "임베딩 생성에 실패했습니다.", "sources": []}
 
-    results = search_similar_bookmarks(embedding, top_k=top_k)
+    results = search_similar_bookmarks(embedding, top_k=top_k, user_id=user_id)
     if not results:
         return {"answer": "관련 북마크를 찾지 못했습니다.", "sources": []}
 

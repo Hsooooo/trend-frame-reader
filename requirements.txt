@@ -11,3 +11,4 @@ yake==0.4.8
 kiwipiepy==0.20.1
 openai==1.82.0
 pymongo[srv]==4.12.1
+python-jose[cryptography]>=3.5.0

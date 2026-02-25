@@ -141,6 +141,11 @@ def apply_schema_upgrades(session: Session) -> None:
     session.execute(
         text("CREATE INDEX IF NOT EXISTS idx_item_keywords_item_id ON item_keywords(item_id)")
     )
+    # Phase 3: users table + user_id columns (handled by Base.metadata.create_all for users table)
+    for tbl, col in [("feedback", "user_id"), ("item_events", "user_id")]:
+        session.execute(
+            text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} INTEGER REFERENCES users(id)")
+        )
     session.commit()
 
 

@@ -111,8 +111,8 @@ def _fetch_item_with_relations(db: Session, item_id: int):
     return item, source, keywords
 
 
-def _build_article_doc(item: Item, source: Source | None, keywords: list[str], saved_at: datetime) -> dict:
-    return {
+def _build_article_doc(item: Item, source: Source | None, keywords: list[str], saved_at: datetime, user_id: int | None = None) -> dict:
+    doc = {
         "_id": f"item_{item.id}",
         "item_id": item.id,
         "url": item.url,
@@ -125,6 +125,9 @@ def _build_article_doc(item: Item, source: Source | None, keywords: list[str], s
         "keywords": keywords,
         "sentiment": None,
     }
+    if user_id is not None:
+        doc["user_id"] = user_id
+    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +135,7 @@ def _build_article_doc(item: Item, source: Source | None, keywords: list[str], s
 # ---------------------------------------------------------------------------
 
 
-def sync_bookmark_to_graph(db: Session, item_id: int, action: str) -> None:
+def sync_bookmark_to_graph(db: Session, item_id: int, action: str, user_id: int | None = None) -> None:
     """Incremental sync. Called after a Feedback row is committed."""
     articles_col = get_articles_collection()
     keywords_col = get_keywords_collection()
@@ -149,7 +152,7 @@ def sync_bookmark_to_graph(db: Session, item_id: int, action: str) -> None:
             return
 
         now = datetime.now(UTC)
-        doc = _build_article_doc(item, source, keywords, saved_at=now)
+        doc = _build_article_doc(item, source, keywords, saved_at=now, user_id=user_id)
 
         # Generate embedding if summary is available
         embed_text = build_embedding_text(item.title, item.summary)
@@ -347,7 +350,7 @@ def backfill_graph(db: Session) -> dict:
     return {"items_processed": items_processed, "status": "completed"}
 
 
-def get_keyword_graph(keyword: str, depth: int = 1) -> dict:
+def get_keyword_graph(keyword: str, depth: int = 1, user_id: int | None = None) -> dict:
     """Return the keyword neighborhood graph up to `depth` hops."""
     keywords_col = get_keywords_collection()
     if keywords_col is None:
@@ -412,14 +415,30 @@ def get_related_keywords(keyword: str, limit: int = 10) -> list[dict]:
     return sorted_cooc[:limit]
 
 
-def get_bookmark_keyword_cloud(limit: int = 30) -> list[dict]:
+def get_bookmark_keyword_cloud(limit: int = 30, user_id: int | None = None) -> list[dict]:
     """Return top keywords by bookmark frequency."""
     keywords_col = get_keywords_collection()
+    articles_col = get_articles_collection()
     if keywords_col is None:
         return []
 
+    if user_id is not None and articles_col is not None:
+        # Filter to keywords that appear in this user's articles
+        user_article_cursor = articles_col.find(
+            {"user_id": user_id},
+            {"keywords": 1, "_id": 0},
+        )
+        user_keywords: set[str] = set()
+        for doc in user_article_cursor:
+            user_keywords.update(doc.get("keywords", []))
+        if not user_keywords:
+            return []
+        query_filter = {"keyword": {"$in": list(user_keywords)}}
+    else:
+        query_filter = {}
+
     cursor = keywords_col.find(
-        {},
+        query_filter,
         {"keyword": 1, "bookmark_frequency": 1, "sentiment_score": 1, "_id": 0},
     ).sort("bookmark_frequency", -1).limit(limit)
 
@@ -433,7 +452,7 @@ def get_bookmark_keyword_cloud(limit: int = 30) -> list[dict]:
     ]
 
 
-def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max_articles_per_keyword: int = 8) -> dict:
+def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max_articles_per_keyword: int = 8, user_id: int | None = None) -> dict:
     """Return a full bipartite graph: keyword nodes, article nodes, and edges."""
     keywords_col = get_keywords_collection()
     articles_col = get_articles_collection()
@@ -518,8 +537,11 @@ def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max
 
     # Query articles that contain any of the visited keywords
     article_limit = max_articles_per_keyword * len(visited)
+    article_filter: dict = {"keywords": {"$in": list(visited)}}
+    if user_id is not None:
+        article_filter["user_id"] = user_id
     cursor = articles_col.find(
-        {"keywords": {"$in": list(visited)}},
+        article_filter,
         {"item_id": 1, "title": 1, "url": 1, "source": 1, "saved_at": 1, "keywords": 1, "_id": 0},
     ).limit(article_limit)
 
@@ -558,7 +580,7 @@ def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max
     }
 
 
-def get_timeline_articles(days: int = 30) -> list[dict]:
+def get_timeline_articles(days: int = 30, user_id: int | None = None) -> list[dict]:
     """Return articles saved within the last `days` days, sorted newest first."""
     articles_col = get_articles_collection()
     if articles_col is None:
@@ -567,8 +589,12 @@ def get_timeline_articles(days: int = 30) -> list[dict]:
     from datetime import timedelta
     cutoff = datetime.now(UTC) - timedelta(days=days)
 
+    timeline_filter: dict = {"saved_at": {"$gte": cutoff}}
+    if user_id is not None:
+        timeline_filter["user_id"] = user_id
+
     cursor = articles_col.find(
-        {"saved_at": {"$gte": cutoff}},
+        timeline_filter,
         {"item_id": 1, "title": 1, "url": 1, "source": 1, "saved_at": 1, "keywords": 1, "sentiment": 1, "_id": 0},
     ).sort("saved_at", -1).limit(200)
 

@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, Feed, Item, ItemEvent, ItemEventType, ItemKeyword
+from app.models import Feedback, Feed, Item, ItemEvent, ItemEventType, ItemKeyword, User
 from app.schemas import BackfillResultOut, GraphBackfillOut, KeywordSentimentItem, KeywordSentimentsOut, MetricsOut
 from app.services.graph import backfill_graph
-from app.security import require_admin_token
+from app.security import get_current_user, require_owner
 from app.services.keywords import build_keyword_text, extract_keywords
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -51,7 +51,7 @@ def _score_to_label(score: float, liked: int, disliked: int) -> str:
 def get_metrics(
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
-    _: None = Depends(require_admin_token),
+    _: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     start_dt, end_dt, from_date, to_date = _window_or_400(date_from, date_to)
@@ -112,7 +112,7 @@ def get_keyword_sentiments(
     date_to: str | None = Query(default=None),
     min_feedback: int = Query(default=2, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
-    _: None = Depends(require_admin_token),
+    _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     start_dt, end_dt, from_date, to_date = _window_or_400(date_from, date_to)
@@ -169,7 +169,7 @@ def get_keyword_sentiments(
 
 @router.post("/backfill-keywords", response_model=BackfillResultOut)
 def backfill_keywords(
-    _: None = Depends(require_admin_token),
+    _: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     """Extract keywords for existing items that don't have any yet."""
@@ -201,7 +201,7 @@ def backfill_keywords(
 
 @router.post("/backfill-graph", response_model=GraphBackfillOut)
 def admin_backfill_graph(
-    _: None = Depends(require_admin_token),
+    _: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
     """Backfill MongoDB knowledge graph from existing bookmarks."""

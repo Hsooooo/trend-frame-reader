@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"
     rag_top_k: int = 5
     graph_backfill_batch_size: int = 50
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    jwt_secret: str = ""
+    jwt_expire_days: int = 30
+    frontend_url: str = "http://localhost:3000"
 
     def cors_origins(self) -> list[str]:
         if not self.cors_allowed_origins.strip():

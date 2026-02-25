@@ -1,13 +1,38 @@
-from fastapi import Header, HTTPException
+from fastapi import Depends, HTTPException, Request
+from jose import JWTError
+from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.db import get_db
+from app.models import User
+from app.services.auth import decode_jwt
 
 
-def require_admin_token(authorization: str | None = Header(default=None)):
-    token = settings.admin_token.strip()
+def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
+    token = request.cookies.get("auth_token")
     if not token:
-        raise HTTPException(status_code=503, detail="admin_token_not_configured")
+        raise HTTPException(status_code=401, detail="not_authenticated")
+    try:
+        user_id = decode_jwt(token)
+    except (JWTError, ValueError):
+        raise HTTPException(status_code=401, detail="invalid_token")
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="user_not_found")
+    return user
 
-    expected = f"Bearer {token}"
-    if authorization != expected:
-        raise HTTPException(status_code=401, detail="unauthorized")
+
+def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User | None:
+    token = request.cookies.get("auth_token")
+    if not token:
+        return None
+    try:
+        user_id = decode_jwt(token)
+    except (JWTError, ValueError):
+        return None
+    return db.get(User, user_id)
+
+
+def require_owner(user: User = Depends(get_current_user)) -> User:
+    if not user.is_owner:
+        raise HTTPException(status_code=403, detail="owner_required")
+    return user

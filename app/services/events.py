@@ -46,7 +46,7 @@ def get_item_event_context(db: Session, item_id: int) -> dict | None:
     }
 
 
-def create_feedback_with_context(db: Session, item_id: int, action: str) -> Feedback:
+def create_feedback_with_context(db: Session, item_id: int, action: str, user_id: int | None = None) -> Feedback:
     ctx = get_item_event_context(db, item_id)
     if not ctx:
         raise ValueError("item_not_found")
@@ -59,12 +59,13 @@ def create_feedback_with_context(db: Session, item_id: int, action: str) -> Feed
         source_id=ctx["source_id"],
         category=ctx["category"],
         feed_id=ctx["feed_id"],
+        user_id=user_id,
     )
     db.add(row)
     return row
 
 
-def create_item_event(db: Session, item_id: int, event_type: str) -> ItemEvent:
+def create_item_event(db: Session, item_id: int, event_type: str, user_id: int | None = None) -> ItemEvent:
     ctx = get_item_event_context(db, item_id)
     if not ctx:
         raise ValueError("item_not_found")
@@ -77,6 +78,7 @@ def create_item_event(db: Session, item_id: int, event_type: str) -> ItemEvent:
         source_id=ctx["source_id"],
         category=ctx["category"],
         feed_id=ctx["feed_id"],
+        user_id=user_id,
     )
     db.add(row)
     return row

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db import get_db
-from app.models import Feedback, FeedbackAction, Item, Source
+from app.models import Feedback, FeedbackAction, Item, Source, User
 from app.schemas import (
     BookmarkAskIn,
     BookmarkAskOut,
@@ -22,6 +22,7 @@ from app.schemas import (
     TimelineArticle,
     TimelineOut,
 )
+from app.security import get_current_user
 from app.services.events import CURATION_ACTIONS
 from app.services.graph import get_bookmark_keyword_cloud, get_full_graph, get_keyword_graph, get_timeline_articles
 from app.services.rag import ask_bookmarks
@@ -33,11 +34,15 @@ router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
 def get_bookmarks(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     latest_feedback = (
         select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
-        .where(Feedback.action.in_(list(CURATION_ACTIONS)))
+        .where(
+            Feedback.action.in_(list(CURATION_ACTIONS)),
+            Feedback.user_id == user.id,
+        )
         .group_by(Feedback.item_id)
         .subquery()
     )
@@ -79,8 +84,11 @@ def get_bookmarks(
 
 
 @router.post("/ask", response_model=BookmarkAskOut)
-def bookmark_ask(payload: BookmarkAskIn):
-    result = ask_bookmarks(payload.query, payload.top_k)
+def bookmark_ask(
+    payload: BookmarkAskIn,
+    user: User = Depends(get_current_user),
+):
+    result = ask_bookmarks(payload.query, payload.top_k, user_id=user.id)
     return BookmarkAskOut(
         answer=result["answer"],
         sources=[BookmarkSource(**s) for s in result.get("sources", [])],
@@ -91,8 +99,9 @@ def bookmark_ask(payload: BookmarkAskIn):
 def bookmark_explore(
     keyword: str = Query(..., min_length=1),
     depth: int = Query(default=1, ge=1, le=3),
+    user: User = Depends(get_current_user),
 ):
-    result = get_keyword_graph(keyword, depth)
+    result = get_keyword_graph(keyword, depth, user_id=user.id)
     if not result:
         raise HTTPException(status_code=404, detail="keyword_not_found")
     return KeywordGraphOut(
@@ -105,8 +114,11 @@ def bookmark_explore(
 
 
 @router.get("/keywords", response_model=KeywordCloudOut)
-def bookmark_keywords(limit: int = Query(default=30, ge=1, le=100)):
-    results = get_bookmark_keyword_cloud(limit)
+def bookmark_keywords(
+    limit: int = Query(default=30, ge=1, le=100),
+    user: User = Depends(get_current_user),
+):
+    results = get_bookmark_keyword_cloud(limit, user_id=user.id)
     items = [KeywordCloudItem(**r) for r in results]
     return KeywordCloudOut(total=len(items), keywords=items)
 
@@ -117,8 +129,9 @@ def bookmark_graph(
     depth: int = Query(default=1, ge=1, le=3),
     max_keyword_nodes: int = Query(default=0, ge=0, le=100),
     max_articles_per_keyword: int = Query(default=8, ge=1, le=20),
+    user: User = Depends(get_current_user),
 ):
-    result = get_full_graph(keyword, depth, max_keyword_nodes, max_articles_per_keyword)
+    result = get_full_graph(keyword, depth, max_keyword_nodes, max_articles_per_keyword, user_id=user.id)
     if not result:
         raise HTTPException(status_code=404, detail="keyword_not_found")
     return FullGraphOut(
@@ -131,8 +144,9 @@ def bookmark_graph(
 @router.get("/timeline", response_model=TimelineOut)
 def bookmark_timeline(
     days: int = Query(default=30, ge=1, le=365),
+    user: User = Depends(get_current_user),
 ):
-    articles = get_timeline_articles(days)
+    articles = get_timeline_articles(days, user_id=user.id)
     return TimelineOut(
         articles=[TimelineArticle(**a) for a in articles],
     )

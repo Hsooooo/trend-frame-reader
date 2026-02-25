@@ -9,12 +9,13 @@ from sqlalchemy.exc import OperationalError
 from app.db import Base, engine, SessionLocal
 from app.models import SlotType
 from app.routers.admin import router as admin_router
+from app.routers.auth import router as auth_router
 from app.routers.bookmarks import router as bookmarks_router
 from app.routers.events import router as events_router
 from app.routers.feedback import router as feedback_router
 from app.routers.feeds import router as feeds_router
 from app.routers.health import router as health_router
-from app.security import require_admin_token
+from app.security import require_owner
 from app.services.feed_builder import generate_feed_for_slot
 from app.services.ingestion import run_ingestion
 from app.services.seeds import apply_schema_upgrades, sync_seed_sources
@@ -69,13 +70,13 @@ def on_shutdown():
 
 
 @app.post("/admin/run-ingestion")
-def admin_run_ingestion(_: None = Depends(require_admin_token)):
+def admin_run_ingestion(_=Depends(require_owner)):
     with SessionLocal() as db:
         return run_ingestion(db)
 
 
 @app.post("/admin/generate-feed/{slot}")
-def admin_generate_feed(slot: str, _: None = Depends(require_admin_token)):
+def admin_generate_feed(slot: str, _=Depends(require_owner)):
     slot_l = slot.lower()
     if slot_l not in {"am", "pm"}:
         return {"error": "invalid_slot", "allowed": ["am", "pm"]}
@@ -86,6 +87,7 @@ def admin_generate_feed(slot: str, _: None = Depends(require_admin_token)):
 
 
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(feeds_router)
 app.include_router(feedback_router)
 app.include_router(bookmarks_router)
