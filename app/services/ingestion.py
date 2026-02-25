@@ -39,8 +39,11 @@ def _fetch_hn_items(limit: int = 80) -> list[dict]:
 
 
 def _strip_html(text: str) -> str:
+    import html as _html
     import re
-    return re.sub(r"<[^>]+>", "", text).strip()
+    # Remove HTML tags first, then decode entities (&amp; → &, &lt; → <, etc.)
+    stripped = re.sub(r"<[^>]+>", "", text)
+    return _html.unescape(stripped).strip()
 
 
 def _fetch_rss_items(url: str, limit: int = 50) -> list[dict]:
