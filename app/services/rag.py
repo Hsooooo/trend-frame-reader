@@ -15,18 +15,23 @@ def search_similar_bookmarks(query_embedding: list[float], top_k: int = 5, user_
     if collection is None:
         return []
 
+    # Fetch a larger candidate pool when post-filtering by user_id is needed,
+    # because Atlas Vector Search does not support user_id as a pre-filter
+    # unless the field is declared filterable in the index definition.
+    fetch_limit = top_k * 5 if user_id is not None else top_k
     vector_search: dict = {
         "index": "vector_index",
         "path": "embedding",
         "queryVector": query_embedding,
-        "numCandidates": top_k * 10,
-        "limit": top_k,
+        "numCandidates": fetch_limit * 10,
+        "limit": fetch_limit,
     }
-    if user_id is not None:
-        vector_search["filter"] = {"user_id": {"$eq": user_id}}
 
-    pipeline = [
-        {"$vectorSearch": vector_search},
+    pipeline: list[dict] = [{"$vectorSearch": vector_search}]
+    if user_id is not None:
+        pipeline.append({"$match": {"user_id": user_id}})
+    pipeline.extend([
+        {"$limit": top_k},
         {
             "$project": {
                 "item_id": 1,
@@ -37,7 +42,7 @@ def search_similar_bookmarks(query_embedding: list[float], top_k: int = 5, user_
                 "score": {"$meta": "vectorSearchScore"},
             }
         },
-    ]
+    ])
 
     try:
         results = list(collection.aggregate(pipeline))
