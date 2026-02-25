@@ -7,9 +7,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db import get_db
 from app.models import Feedback, FeedbackAction, Item, Source
-from app.schemas import BookmarkAskIn, BookmarkAskOut, BookmarkSource, KeywordCloudItem, KeywordCloudOut, KeywordGraphOut, KeywordNeighbor
+from app.schemas import (
+    BookmarkAskIn,
+    BookmarkAskOut,
+    BookmarkSource,
+    FullGraphArticleNode,
+    FullGraphKeywordNode,
+    FullGraphOut,
+    GraphEdge,
+    KeywordCloudItem,
+    KeywordCloudOut,
+    KeywordGraphOut,
+    KeywordNeighbor,
+    TimelineArticle,
+    TimelineOut,
+)
 from app.services.events import CURATION_ACTIONS
-from app.services.graph import get_keyword_graph, get_bookmark_keyword_cloud
+from app.services.graph import get_bookmark_keyword_cloud, get_full_graph, get_keyword_graph, get_timeline_articles
 from app.services.rag import ask_bookmarks
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
@@ -95,3 +109,28 @@ def bookmark_keywords(limit: int = Query(default=30, ge=1, le=100)):
     results = get_bookmark_keyword_cloud(limit)
     items = [KeywordCloudItem(**r) for r in results]
     return KeywordCloudOut(total=len(items), keywords=items)
+
+
+@router.get("/graph", response_model=FullGraphOut)
+def bookmark_graph(
+    keyword: str = Query(..., min_length=1),
+    depth: int = Query(default=1, ge=1, le=3),
+):
+    result = get_full_graph(keyword, depth)
+    if not result:
+        raise HTTPException(status_code=404, detail="keyword_not_found")
+    return FullGraphOut(
+        keyword_nodes=[FullGraphKeywordNode(**n) for n in result.get("keyword_nodes", [])],
+        article_nodes=[FullGraphArticleNode(**n) for n in result.get("article_nodes", [])],
+        edges=[GraphEdge(**e) for e in result.get("edges", [])],
+    )
+
+
+@router.get("/timeline", response_model=TimelineOut)
+def bookmark_timeline(
+    days: int = Query(default=30, ge=1, le=365),
+):
+    articles = get_timeline_articles(days)
+    return TimelineOut(
+        articles=[TimelineArticle(**a) for a in articles],
+    )

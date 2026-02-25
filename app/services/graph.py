@@ -431,3 +431,145 @@ def get_bookmark_keyword_cloud(limit: int = 30) -> list[dict]:
         }
         for doc in cursor
     ]
+
+
+def get_full_graph(keyword: str, depth: int = 1, max_articles_per_keyword: int = 8) -> dict:
+    """Return a full bipartite graph: keyword nodes, article nodes, and edges."""
+    keywords_col = get_keywords_collection()
+    articles_col = get_articles_collection()
+    if keywords_col is None or articles_col is None:
+        return {}
+
+    def _fetch_node(kw: str) -> dict | None:
+        return keywords_col.find_one({"keyword": kw})
+
+    root = _fetch_node(keyword)
+    if root is None:
+        return {}
+
+    visited: set[str] = {keyword}
+    cooc_edges: list[dict] = []
+
+    # BFS up to `depth` — collect visited keywords and co-occurrence edges
+    current_level: list[str] = [keyword]
+    for _ in range(depth):
+        next_level: list[str] = []
+        for kw in current_level:
+            node = _fetch_node(kw)
+            if node is None:
+                continue
+            for cooc in node.get("cooccurrences", []):
+                neighbor_kw = cooc.get("keyword")
+                count = cooc.get("count", 0)
+                if neighbor_kw is None:
+                    continue
+                # Deduplicate edges (store only one direction per pair)
+                pair = tuple(sorted([kw, neighbor_kw]))
+                edge_exists = any(
+                    e["_pair"] == pair for e in cooc_edges
+                )
+                if not edge_exists:
+                    cooc_edges.append({
+                        "_pair": pair,
+                        "source": f"kw_{kw}",
+                        "target": f"kw_{neighbor_kw}",
+                        "type": "cooccurrence",
+                        "weight": count,
+                    })
+                if neighbor_kw not in visited:
+                    visited.add(neighbor_kw)
+                    next_level.append(neighbor_kw)
+        current_level = next_level
+
+    # Build keyword nodes
+    keyword_nodes: list[dict] = []
+    for kw in visited:
+        doc = _fetch_node(kw)
+        keyword_nodes.append({
+            "id": f"kw_{kw}",
+            "keyword": kw,
+            "doc_frequency": doc.get("doc_frequency", 0) if doc else 0,
+            "bookmark_frequency": doc.get("bookmark_frequency", 0) if doc else 0,
+            "sentiment_score": (doc.get("sentiment_score") or 0.0) if doc else 0.0,
+        })
+
+    # Strip internal _pair field from edges
+    edges: list[dict] = [
+        {k: v for k, v in e.items() if k != "_pair"}
+        for e in cooc_edges
+    ]
+
+    # Query articles that contain any of the visited keywords
+    article_limit = max_articles_per_keyword * len(visited)
+    cursor = articles_col.find(
+        {"keywords": {"$in": list(visited)}},
+        {"item_id": 1, "title": 1, "url": 1, "source": 1, "saved_at": 1, "keywords": 1, "_id": 0},
+    ).limit(article_limit)
+
+    article_nodes: list[dict] = []
+    for doc in cursor:
+        item_id = doc.get("item_id")
+        if item_id is None:
+            continue
+        saved_at = doc.get("saved_at")
+        saved_at_str = saved_at.isoformat() if isinstance(saved_at, datetime) else str(saved_at) if saved_at else None
+        article_node = {
+            "id": f"item_{item_id}",
+            "item_id": item_id,
+            "title": doc.get("title", ""),
+            "url": doc.get("url", ""),
+            "source": doc.get("source"),
+            "saved_at": saved_at_str,
+            "keywords": doc.get("keywords", []),
+        }
+        article_nodes.append(article_node)
+
+        # has_keyword edges from article to each keyword in the visited set
+        for kw in doc.get("keywords", []):
+            if kw in visited:
+                edges.append({
+                    "source": f"item_{item_id}",
+                    "target": f"kw_{kw}",
+                    "type": "has_keyword",
+                    "weight": 1,
+                })
+
+    return {
+        "keyword_nodes": keyword_nodes,
+        "article_nodes": article_nodes,
+        "edges": edges,
+    }
+
+
+def get_timeline_articles(days: int = 30) -> list[dict]:
+    """Return articles saved within the last `days` days, sorted newest first."""
+    articles_col = get_articles_collection()
+    if articles_col is None:
+        return []
+
+    from datetime import timedelta
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+
+    cursor = articles_col.find(
+        {"saved_at": {"$gte": cutoff}},
+        {"item_id": 1, "title": 1, "url": 1, "source": 1, "saved_at": 1, "keywords": 1, "sentiment": 1, "_id": 0},
+    ).sort("saved_at", -1).limit(200)
+
+    results: list[dict] = []
+    for doc in cursor:
+        item_id = doc.get("item_id")
+        if item_id is None:
+            continue
+        saved_at = doc.get("saved_at")
+        saved_at_str = saved_at.isoformat() if isinstance(saved_at, datetime) else str(saved_at)
+        results.append({
+            "item_id": item_id,
+            "title": doc.get("title", ""),
+            "url": doc.get("url", ""),
+            "source": doc.get("source"),
+            "saved_at": saved_at_str,
+            "keywords": doc.get("keywords", []),
+            "sentiment": doc.get("sentiment"),
+        })
+
+    return results

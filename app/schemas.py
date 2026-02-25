@@ -132,3 +132,43 @@ class KeywordCloudOut(BaseModel):
 class GraphBackfillOut(BaseModel):
     items_processed: int
     status: str
+
+
+class FullGraphKeywordNode(BaseModel):
+    id: str                    # "kw_{keyword}"
+    keyword: str
+    doc_frequency: int = 0
+    bookmark_frequency: int = 0
+    sentiment_score: float = 0.0
+
+class FullGraphArticleNode(BaseModel):
+    id: str                    # "item_{item_id}"
+    item_id: int
+    title: str
+    url: str
+    source: str | None = None
+    saved_at: str | None = None
+    keywords: list[str] = []
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    type: str                  # "cooccurrence" | "has_keyword"
+    weight: int = 1
+
+class FullGraphOut(BaseModel):
+    keyword_nodes: list[FullGraphKeywordNode]
+    article_nodes: list[FullGraphArticleNode]
+    edges: list[GraphEdge]
+
+class TimelineArticle(BaseModel):
+    item_id: int
+    title: str
+    url: str
+    source: str | None = None
+    saved_at: str
+    keywords: list[str] = []
+    sentiment: str | None = None
+
+class TimelineOut(BaseModel):
+    articles: list[TimelineArticle]
