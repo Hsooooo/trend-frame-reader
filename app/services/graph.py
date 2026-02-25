@@ -37,17 +37,29 @@ def _upsert_article(articles_col, doc: dict) -> None:
     )
 
 
-def _increment_keyword(keywords_col, keyword: str, now: datetime) -> None:
+def _increment_keyword(keywords_col, keyword: str, now: datetime, language: str | None = None) -> None:
+    set_on_insert: dict = {
+        "keyword": keyword,
+        "sentiment_score": None,
+        "cooccurrences": [],
+    }
+    set_fields: dict = {"last_seen_at": now}
+    if language:
+        set_fields["language"] = language
+
+    # Generate embedding on first insert only
+    existing = keywords_col.find_one({"keyword": keyword}, {"embedding": 1})
+    if existing is None:
+        embedding = generate_embedding(keyword)
+        if embedding is not None:
+            set_on_insert["embedding"] = embedding
+
     keywords_col.update_one(
         {"keyword": keyword},
         {
             "$inc": {"doc_frequency": 1, "bookmark_frequency": 1},
-            "$set": {"last_seen_at": now},
-            "$setOnInsert": {
-                "keyword": keyword,
-                "sentiment_score": None,
-                "cooccurrences": [],
-            },
+            "$set": set_fields,
+            "$setOnInsert": set_on_insert,
         },
         upsert=True,
     )
@@ -178,7 +190,7 @@ def sync_bookmark_to_graph(db: Session, item_id: int, action: str, user_id: int 
 
         for kw in keywords:
             try:
-                _increment_keyword(keywords_col, kw, now)
+                _increment_keyword(keywords_col, kw, now, language=item.language)
             except Exception:
                 logger.exception("Failed to upsert keyword '%s'", kw)
 
@@ -312,12 +324,16 @@ def backfill_graph(db: Session) -> dict:
 
         # Aggregate keywords and co-occurrences per batch
         kw_freq: dict[str, int] = {}
+        kw_language: dict[str, str] = {}
         cooc_pairs: list[tuple[str, str]] = []
 
         for item_id in batch_ids:
+            item = items_map.get(item_id)
             keywords = keywords_by_item.get(item_id, [])
             for kw in keywords:
                 kw_freq[kw] = kw_freq.get(kw, 0) + 1
+                if item and not kw_language.get(kw):
+                    kw_language[kw] = item.language
             cooc_pairs.extend(combinations(keywords, 2))
 
         for kw, freq in kw_freq.items():
@@ -326,7 +342,7 @@ def backfill_graph(db: Session) -> dict:
                     {"keyword": kw},
                     {
                         "$inc": {"doc_frequency": freq, "bookmark_frequency": freq},
-                        "$set": {"last_seen_at": now},
+                        "$set": {"last_seen_at": now, **({"language": kw_language[kw]} if kw in kw_language else {})},
                         "$setOnInsert": {
                             "keyword": kw,
                             "sentiment_score": None,
