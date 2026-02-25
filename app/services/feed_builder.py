@@ -44,7 +44,7 @@ def _pick_next_item(
     return idx, None
 
 
-def generate_feed_for_slot(db: Session, slot: SlotType):
+def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = None):
     started = utcnow()
     job = Job(job_type=f"feed_generation_{slot.value}", started_at=started, status="running")
     db.add(job)
@@ -64,9 +64,13 @@ def generate_feed_for_slot(db: Session, slot: SlotType):
             db.add(feed)
             db.flush()
 
+        exclusion_filter = [Feedback.action.in_(list(CURATION_ACTIONS))]
+        if user_id is not None:
+            exclusion_filter.append(Feedback.user_id == user_id)
+
         latest_feedback = (
             select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
-            .where(Feedback.action.in_(list(CURATION_ACTIONS)))
+            .where(*exclusion_filter)
             .group_by(Feedback.item_id)
             .subquery()
         )

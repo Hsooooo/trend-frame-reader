@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, SlotType, Source
+from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, SlotType, Source, User
 from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot
+from app.security import get_optional_user
 from app.services.events import CURATION_ACTIONS, PREFERENCE_ACTIONS, create_feed_impression_events
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
@@ -19,6 +20,7 @@ APP_TZ = ZoneInfo(settings.app_timezone)
 @router.get("/today", response_model=FeedOut)
 def get_today_feed(
     slot: Slot = Query(...),
+    current_user: User | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
     today = datetime.now(APP_TZ).date()
@@ -28,15 +30,23 @@ def get_today_feed(
     if not feed:
         raise HTTPException(status_code=404, detail="feed_not_generated")
 
+    user_id = current_user.id if current_user else None
+
+    curation_filter = [Feedback.action.in_(list(CURATION_ACTIONS))]
+    preference_filter = [Feedback.action.in_(list(PREFERENCE_ACTIONS))]
+    if user_id is not None:
+        curation_filter.append(Feedback.user_id == user_id)
+        preference_filter.append(Feedback.user_id == user_id)
+
     latest_curation = (
         select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
-        .where(Feedback.action.in_(list(CURATION_ACTIONS)))
+        .where(*curation_filter)
         .group_by(Feedback.item_id)
         .subquery()
     )
     latest_preference = (
         select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
-        .where(Feedback.action.in_(list(PREFERENCE_ACTIONS)))
+        .where(*preference_filter)
         .group_by(Feedback.item_id)
         .subquery()
     )
