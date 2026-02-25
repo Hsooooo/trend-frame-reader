@@ -86,9 +86,9 @@ def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) ->
         if not isinstance(keywords, list):
             return None
         return [
-            {"keyword": str(kw), "score": round(1 - i / max(len(keywords), 1), 4)}
+            {"keyword": kw.strip(), "score": round(1 - i / max(len(keywords), 1), 4)}
             for i, kw in enumerate(keywords[:max_keywords])
-            if str(kw).strip()
+            if isinstance(kw, str) and 1 <= len(kw.strip()) <= 50
         ]
     except Exception:
         logger.warning("OpenAI keyword extraction failed", exc_info=True)
