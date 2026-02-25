@@ -19,9 +19,12 @@ from app.schemas import (
     KeywordSentimentItem,
     KeywordSentimentsOut,
     MetricsOut,
+    RssPublishedAtBackfillIn,
+    RssPublishedAtBackfillOut,
 )
 from app.services.graph import backfill_graph
 from app.services.insights import generate_draft, publish_post, unpublish_post
+from app.services.ingestion import backfill_rss_published_at
 from app.services.keyword_embeddings import backfill_keyword_embeddings
 from app.mongo import get_keywords_collection
 from app.security import get_current_user, require_owner
@@ -220,6 +223,26 @@ def admin_backfill_graph(
     """Backfill MongoDB knowledge graph from existing bookmarks."""
     result = backfill_graph(db)
     return GraphBackfillOut(**result)
+
+
+@router.post("/backfill-rss-published-at", response_model=RssPublishedAtBackfillOut)
+def admin_backfill_rss_published_at(
+    body: RssPublishedAtBackfillIn = RssPublishedAtBackfillIn(),
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    try:
+        result = backfill_rss_published_at(
+            db,
+            start_date=body.start_date,
+            end_date=body.end_date,
+            limit_per_source=body.limit_per_source,
+            only_null_published_at=body.only_null_published_at,
+            dry_run=body.dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return RssPublishedAtBackfillOut(**result)
 
 
 def _post_to_admin_out(post: InsightPost) -> InsightPostAdminOut:

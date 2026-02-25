@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -80,6 +80,27 @@ class KeywordSentimentsOut(BaseModel):
 class BackfillResultOut(BaseModel):
     processed: int
     keywords_created: int
+
+
+class RssPublishedAtBackfillIn(BaseModel):
+    start_date: date = Field(default=date(2026, 2, 20))
+    end_date: date | None = None
+    limit_per_source: int = Field(default=300, ge=10, le=2000)
+    only_null_published_at: bool = True
+    dry_run: bool = False
+
+
+class RssPublishedAtBackfillOut(BaseModel):
+    start_date: str
+    end_date: str
+    sources_total: int
+    sources_processed: int
+    source_errors: int
+    entries_scanned: int
+    matched_items: int
+    updated_items: int
+    skipped_missing_datetime: int
+    dry_run: bool
 
 
 class HealthOut(BaseModel):
