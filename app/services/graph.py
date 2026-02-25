@@ -76,6 +76,15 @@ def _sync_cooccurrences(keywords_col, keywords: list[str]) -> None:
         _update_cooccurrence(keywords_col, kw_b, kw_a)
 
 
+def _get_user_keywords(articles_col, user_id: int) -> set[str]:
+    """Return the set of keywords from the user's bookmarked articles."""
+    cursor = articles_col.find({"user_id": user_id}, {"keywords": 1, "_id": 0})
+    user_keywords: set[str] = set()
+    for doc in cursor:
+        user_keywords.update(doc.get("keywords", []))
+    return user_keywords
+
+
 def _recalculate_sentiment(articles_col, keywords_col, keywords: list[str]) -> None:
     """Recompute sentiment_score for each keyword based on all bookmarked articles."""
     for kw in keywords:
@@ -353,8 +362,16 @@ def backfill_graph(db: Session) -> dict:
 def get_keyword_graph(keyword: str, depth: int = 1, user_id: int | None = None) -> dict:
     """Return the keyword neighborhood graph up to `depth` hops."""
     keywords_col = get_keywords_collection()
+    articles_col = get_articles_collection()
     if keywords_col is None:
         return {}
+
+    # Build allowed keyword set from user's bookmarks for personalization
+    allowed_keywords: set[str] | None = None
+    if user_id is not None and articles_col is not None:
+        allowed_keywords = _get_user_keywords(articles_col, user_id)
+        if keyword not in allowed_keywords:
+            return {}
 
     def _fetch_node(kw: str) -> dict | None:
         return keywords_col.find_one({"keyword": kw})
@@ -378,6 +395,9 @@ def get_keyword_graph(keyword: str, depth: int = 1, user_id: int | None = None) 
                 neighbor_kw = cooc.get("keyword")
                 count = cooc.get("count", 0)
                 if neighbor_kw is None:
+                    continue
+                # Skip keywords not in user's bookmarks when personalized
+                if allowed_keywords is not None and neighbor_kw not in allowed_keywords:
                     continue
                 neighbor_doc = _fetch_node(neighbor_kw)
                 entry = {
@@ -423,22 +443,27 @@ def get_bookmark_keyword_cloud(limit: int = 30, user_id: int | None = None) -> l
         return []
 
     if user_id is not None and articles_col is not None:
-        # Filter to keywords that appear in this user's articles
-        user_article_cursor = articles_col.find(
-            {"user_id": user_id},
-            {"keywords": 1, "_id": 0},
-        )
-        user_keywords: set[str] = set()
-        for doc in user_article_cursor:
-            user_keywords.update(doc.get("keywords", []))
-        if not user_keywords:
-            return []
-        query_filter = {"keyword": {"$in": list(user_keywords)}}
-    else:
-        query_filter = {}
+        # Count keyword frequencies directly from user's bookmarked articles
+        pipeline = [
+            {"$match": {"user_id": user_id}},
+            {"$unwind": "$keywords"},
+            {"$group": {"_id": "$keywords", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": limit},
+        ]
+        keyword_counts = {doc["_id"]: doc["count"] for doc in articles_col.aggregate(pipeline)}
+        result = []
+        for kw, count in keyword_counts.items():
+            kw_doc = keywords_col.find_one({"keyword": kw}, {"sentiment_score": 1})
+            result.append({
+                "keyword": kw,
+                "frequency": count,
+                "sentiment_score": (kw_doc.get("sentiment_score") or 0.0) if kw_doc else 0.0,
+            })
+        return result
 
     cursor = keywords_col.find(
-        query_filter,
+        {},
         {"keyword": 1, "bookmark_frequency": 1, "sentiment_score": 1, "_id": 0},
     ).sort("bookmark_frequency", -1).limit(limit)
 
@@ -466,6 +491,13 @@ def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max
     if root is None:
         return {}
 
+    # Build allowed keyword set from user's bookmarks for personalization
+    allowed_keywords: set[str] | None = None
+    if user_id is not None and articles_col is not None:
+        allowed_keywords = _get_user_keywords(articles_col, user_id)
+        if keyword not in allowed_keywords:
+            return {}
+
     visited: set[str] = {keyword}
     cooc_edges: list[dict] = []
 
@@ -481,6 +513,9 @@ def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max
                 neighbor_kw = cooc.get("keyword")
                 count = cooc.get("count", 0)
                 if neighbor_kw is None:
+                    continue
+                # Skip keywords not in user's bookmarks when personalized
+                if allowed_keywords is not None and neighbor_kw not in allowed_keywords:
                     continue
                 # Deduplicate edges (store only one direction per pair)
                 pair = tuple(sorted([kw, neighbor_kw]))
