@@ -433,7 +433,7 @@ def get_bookmark_keyword_cloud(limit: int = 30) -> list[dict]:
     ]
 
 
-def get_full_graph(keyword: str, depth: int = 1, max_articles_per_keyword: int = 8) -> dict:
+def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max_articles_per_keyword: int = 8) -> dict:
     """Return a full bipartite graph: keyword nodes, article nodes, and edges."""
     keywords_col = get_keywords_collection()
     articles_col = get_articles_collection()
@@ -480,6 +480,23 @@ def get_full_graph(keyword: str, depth: int = 1, max_articles_per_keyword: int =
                     visited.add(neighbor_kw)
                     next_level.append(neighbor_kw)
         current_level = next_level
+
+    # Trim keyword nodes if max_keyword_nodes is set
+    if max_keyword_nodes > 0 and len(visited) > max_keyword_nodes:
+        non_root = visited - {keyword}
+        ranked = sorted(
+            non_root,
+            key=lambda kw: (keywords_col.find_one({"keyword": kw}) or {}).get("bookmark_frequency", 0),
+            reverse=True,
+        )
+        trimmed = set(ranked[: max_keyword_nodes - 1]) | {keyword}
+        # Re-filter cooc_edges to only include trimmed keywords
+        cooc_edges = [
+            e for e in cooc_edges
+            if e["source"] in {f"kw_{k}" for k in trimmed}
+            and e["target"] in {f"kw_{k}" for k in trimmed}
+        ]
+        visited = trimmed
 
     # Build keyword nodes
     keyword_nodes: list[dict] = []

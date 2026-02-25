@@ -115,8 +115,10 @@ def bookmark_keywords(limit: int = Query(default=30, ge=1, le=100)):
 def bookmark_graph(
     keyword: str = Query(..., min_length=1),
     depth: int = Query(default=1, ge=1, le=3),
+    max_keyword_nodes: int = Query(default=0, ge=0, le=100),
+    max_articles_per_keyword: int = Query(default=8, ge=1, le=20),
 ):
-    result = get_full_graph(keyword, depth)
+    result = get_full_graph(keyword, depth, max_keyword_nodes, max_articles_per_keyword)
     if not result:
         raise HTTPException(status_code=404, detail="keyword_not_found")
     return FullGraphOut(
