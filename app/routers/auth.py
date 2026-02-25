@@ -73,15 +73,14 @@ def google_callback(
     else:
         redirect_to = settings.frontend_url
 
-    _secure = settings.google_redirect_uri.startswith("https")
-
+    # SameSite=None; Secure required for cross-origin fetch (frontend on different domain)
     response = RedirectResponse(url=redirect_to)
     response.set_cookie(
         key=_COOKIE_NAME,
         value=jwt_token,
         httponly=True,
-        samesite="lax",
-        secure=_secure,
+        samesite="none",
+        secure=True,
         max_age=_COOKIE_MAX_AGE,
     )
     return response
@@ -104,6 +103,5 @@ def get_me(user: User | None = Depends(get_optional_user)):
 @router.post("/logout")
 def logout(response: Response):
     """Clear auth cookie."""
-    _secure = settings.google_redirect_uri.startswith("https")
-    response.delete_cookie(key=_COOKIE_NAME, httponly=True, samesite="lax", secure=_secure)
+    response.delete_cookie(key=_COOKIE_NAME, httponly=True, samesite="none", secure=True)
     return {"ok": True}
