@@ -146,6 +146,31 @@ def apply_schema_upgrades(session: Session) -> None:
         session.execute(
             text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} INTEGER REFERENCES users(id)")
         )
+    # Phase 3.5: insight_posts table for weekly insight content
+    session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS insight_posts (
+                id SERIAL PRIMARY KEY,
+                slug VARCHAR(255) NOT NULL UNIQUE,
+                title VARCHAR(512) NOT NULL,
+                summary TEXT,
+                body TEXT,
+                status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                published_at TIMESTAMPTZ
+            )
+            """
+        )
+    )
+    session.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_insight_posts_status ON insight_posts(status)")
+    )
+    session.execute(
+        text("CREATE INDEX IF NOT EXISTS idx_insight_posts_published_at ON insight_posts(published_at)")
+    )
     session.commit()
 
 
