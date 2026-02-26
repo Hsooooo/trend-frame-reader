@@ -10,6 +10,7 @@
 4. [Data Model](./architecture/04-data-model.md)
 5. [Operations](./architecture/05-operations.md)
 6. [API Map](./architecture/06-api-map.md)
+7. [Learning Guides](./learning/README.md) (RAG / Ontology 중심)
 
 ## 범위
 
