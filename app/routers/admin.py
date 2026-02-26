@@ -414,6 +414,21 @@ def admin_unpublish_insight_post(
     return _post_to_admin_out(post)
 
 
+@router.delete("/insights/posts/{post_id}", status_code=204)
+def admin_delete_insight_post(
+    post_id: int,
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    post = db.get(InsightPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="post_not_found")
+    if post.status == "published":
+        raise HTTPException(status_code=400, detail="cannot_delete_published_post")
+    db.delete(post)
+    db.commit()
+
+
 @router.post("/keywords/backfill-embeddings")
 def admin_backfill_keyword_embeddings(
     _: User = Depends(require_owner),
