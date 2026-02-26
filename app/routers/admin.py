@@ -21,6 +21,8 @@ from app.schemas import (
     MetricsOut,
     RssPublishedAtBackfillIn,
     RssPublishedAtBackfillOut,
+    UserStatItem,
+    UserStatsOut,
 )
 from app.services.graph import backfill_graph
 from app.services.insights import generate_draft, publish_post, unpublish_post
@@ -181,6 +183,85 @@ def get_keyword_sentiments(
         total_keywords=len(keywords),
         keywords=keywords,
     )
+
+
+@router.get("/user-stats", response_model=UserStatsOut)
+def get_user_stats(
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    now = datetime.now(APP_TZ)
+    try:
+        end_dt_local = datetime.combine(
+            date.fromisoformat(date_to) + timedelta(days=1) if date_to else now.date() + timedelta(days=1),
+            time.min,
+            APP_TZ,
+        )
+        start_dt_local = datetime.combine(
+            date.fromisoformat(date_from) if date_from else now.date() - timedelta(days=29),
+            time.min,
+            APP_TZ,
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_date_format") from None
+
+    start_dt = start_dt_local.astimezone(UTC)
+    end_dt = end_dt_local.astimezone(UTC)
+    from_date = start_dt_local.date()
+    to_date = (end_dt_local - timedelta(days=1)).date()
+
+    users = db.execute(select(User).order_by(User.id)).scalars().all()
+
+    event_rows = db.execute(
+        select(
+            ItemEvent.user_id,
+            func.sum(case((ItemEvent.event_type == ItemEventType.IMPRESSION.value, 1), else_=0)).label("impressions"),
+            func.sum(case((ItemEvent.event_type == ItemEventType.CLICK.value, 1), else_=0)).label("clicks"),
+        )
+        .where(ItemEvent.created_at >= start_dt, ItemEvent.created_at < end_dt)
+        .group_by(ItemEvent.user_id)
+    ).all()
+    event_map = {r.user_id: r for r in event_rows}
+
+    feedback_rows = db.execute(
+        select(
+            Feedback.user_id,
+            func.sum(case((Feedback.action == "saved", 1), else_=0)).label("saved"),
+            func.sum(case((Feedback.action == "liked", 1), else_=0)).label("liked"),
+            func.sum(case((Feedback.action == "disliked", 1), else_=0)).label("disliked"),
+            func.sum(case((Feedback.action == "skipped", 1), else_=0)).label("skipped"),
+        )
+        .where(Feedback.created_at >= start_dt, Feedback.created_at < end_dt)
+        .group_by(Feedback.user_id)
+    ).all()
+    feedback_map = {r.user_id: r for r in feedback_rows}
+
+    result = []
+    for u in users:
+        ev = event_map.get(u.id)
+        fb = feedback_map.get(u.id)
+        impressions = int(ev.impressions) if ev else 0
+        clicks = int(ev.clicks) if ev else 0
+        ctr = clicks / impressions if impressions > 0 else 0.0
+        result.append(UserStatItem(
+            user_id=u.id,
+            email=u.email,
+            name=u.name,
+            is_owner=u.is_owner,
+            joined_at=u.created_at.isoformat(),
+            impressions=impressions,
+            clicks=clicks,
+            ctr=round(ctr, 4),
+            saved=int(fb.saved) if fb else 0,
+            liked=int(fb.liked) if fb else 0,
+            disliked=int(fb.disliked) if fb else 0,
+            skipped=int(fb.skipped) if fb else 0,
+        ))
+
+    result.sort(key=lambda x: x.impressions, reverse=True)
+    return UserStatsOut(date_from=str(from_date), date_to=str(to_date), users=result)
 
 
 @router.post("/backfill-keywords", response_model=BackfillResultOut)

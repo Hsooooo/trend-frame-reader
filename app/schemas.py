@@ -260,3 +260,24 @@ class SimilarityGraphOut(BaseModel):
     keyword_nodes: list[SimilarityGraphKeywordNode]
     article_nodes: list[FullGraphArticleNode]
     edges: list[SimilarityGraphEdge]
+
+
+class UserStatItem(BaseModel):
+    user_id: int
+    email: str
+    name: str
+    is_owner: bool
+    joined_at: str
+    impressions: int = 0
+    clicks: int = 0
+    ctr: float = 0.0
+    saved: int = 0
+    liked: int = 0
+    disliked: int = 0
+    skipped: int = 0
+
+
+class UserStatsOut(BaseModel):
+    date_from: str
+    date_to: str
+    users: list[UserStatItem]
