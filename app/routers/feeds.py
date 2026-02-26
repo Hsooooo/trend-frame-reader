@@ -1,32 +1,30 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session, aliased
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, SlotType, Source, User
+from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, Source, User
 from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot
 from app.security import get_optional_user
 from app.services.events import CURATION_ACTIONS, PREFERENCE_ACTIONS, create_feed_impression_events
+from app.services.feed_builder import current_period_info
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
-APP_TZ = ZoneInfo(settings.app_timezone)
 
 
 @router.get("/today", response_model=FeedOut)
 def get_today_feed(
-    slot: Slot = Query(...),
     current_user: User | None = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ):
-    today = datetime.now(APP_TZ).date()
-    slot_type = SlotType.AM if slot == Slot.am else SlotType.PM
+    feed_date, slot_type, _ = current_period_info(datetime.now(timezone.utc))
 
-    feed = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot_type))).scalar_one_or_none()
+    feed = db.execute(select(Feed).where(and_(Feed.feed_date == feed_date, Feed.slot == slot_type))).scalar_one_or_none()
     if not feed:
         raise HTTPException(status_code=404, detail="feed_not_generated")
 
@@ -111,4 +109,5 @@ def get_today_feed(
         db.rollback()
 
     groups = [FeedCategoryGroup(category=cat, items=cat_items) for cat, cat_items in grouped.items()]
+    slot = Slot.am if slot_type.value == "am" else Slot.pm
     return FeedOut(feed_date=str(feed.feed_date), slot=slot, generated_at=feed.generated_at, items=items, groups=groups)

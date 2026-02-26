@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta, timezone
 import random
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
@@ -15,6 +15,25 @@ from app.services.events import CURATION_ACTIONS
 from app.services.utils import utcnow
 
 APP_TZ = ZoneInfo(settings.app_timezone)
+UTC = timezone.utc
+
+
+def current_period_info(now_utc: datetime) -> tuple[date, SlotType, datetime]:
+    """Returns (feed_date, slot, period_start_utc) for the current rolling period."""
+    now_local = now_utc.astimezone(APP_TZ)
+    today = now_local.date()
+    hour = now_local.hour
+
+    if 6 <= hour < 18:
+        start_local = datetime.combine(today, time(6, 0), APP_TZ)
+        return today, SlotType.AM, start_local.astimezone(UTC)
+    elif hour >= 18:
+        start_local = datetime.combine(today, time(18, 0), APP_TZ)
+        return today, SlotType.PM, start_local.astimezone(UTC)
+    else:  # 00:00 ~ 05:59 — night period started yesterday
+        yesterday = today - timedelta(days=1)
+        start_local = datetime.combine(yesterday, time(18, 0), APP_TZ)
+        return yesterday, SlotType.PM, start_local.astimezone(UTC)
 
 
 def _reason(item: Item) -> str:
@@ -44,7 +63,13 @@ def _pick_next_item(
     return idx, None
 
 
-def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = None):
+def generate_feed_for_slot(
+    db: Session,
+    slot: SlotType,
+    feed_date: date | None = None,
+    period_start: datetime | None = None,
+    user_id: int | None = None,
+):
     started = utcnow()
     job = Job(job_type=f"feed_generation_{slot.value}", started_at=started, status="running")
     db.add(job)
@@ -52,15 +77,16 @@ def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = No
 
     try:
         now = utcnow()
-        today = now.astimezone(APP_TZ).date()
+        if feed_date is None or period_start is None:
+            feed_date, _slot, period_start = current_period_info(now)
 
-        existing = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot))).scalar_one_or_none()
+        existing = db.execute(select(Feed).where(and_(Feed.feed_date == feed_date, Feed.slot == slot))).scalar_one_or_none()
         if existing:
             db.execute(delete(FeedItem).where(FeedItem.feed_id == existing.id))
             feed = existing
             feed.generated_at = now
         else:
-            feed = Feed(feed_date=today, slot=slot, generated_at=now)
+            feed = Feed(feed_date=feed_date, slot=slot, generated_at=now)
             db.add(feed)
             db.flush()
 
@@ -79,7 +105,7 @@ def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = No
             .join(latest_feedback, Feedback.id == latest_feedback.c.max_id)
         )
 
-        cutoff = now - timedelta(hours=settings.ingestion_lookback_hours)
+        cutoff = period_start
         items = db.execute(
             select(Item)
             .where(Item.fetched_at >= cutoff, Item.id.not_in(excluded_items))
