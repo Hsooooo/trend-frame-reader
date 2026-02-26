@@ -1,17 +1,17 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session, joinedload
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, FeedbackAction, Item, ItemKeyword, Source, User
+from app.models import Feedback, FeedbackAction, Item, ItemKeyword, User
 from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot
 from app.security import get_optional_user
 from app.services.events import CURATION_ACTIONS, PREFERENCE_ACTIONS
-from app.services.feed_builder import current_period_info
+from app.services.feed_builder import current_period_info, pick_diverse_items
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 
@@ -43,27 +43,23 @@ def get_today_feed(
             ).scalars().all()
         )
 
-    # Dynamic item query from current period
+    # Large pool from current period → apply diversity logic
+    pool_limit = max(300, settings.feed_max_items_total * 20)
     q = (
-        select(Item, Source)
-        .join(Source, Item.source_id == Source.id)
+        select(Item)
+        .options(joinedload(Item.source))
         .where(Item.fetched_at >= period_start)
     )
     if excluded_ids:
         q = q.where(Item.id.not_in(excluded_ids))
+    q = q.order_by(desc(Item.score), desc(Item.id)).limit(pool_limit)
 
-    if user_id is None:
-        q = q.order_by(func.random())
-    else:
-        q = q.order_by(desc(Item.score), desc(Item.id))
-
-    q = q.limit(settings.feed_max_items_total)
-    item_source_rows = db.execute(q).all()
-
-    if not item_source_rows:
+    pool = db.execute(q).scalars().all()
+    if not pool:
         raise HTTPException(status_code=404, detail="feed_not_generated")
 
-    item_ids = [item.id for item, _ in item_source_rows]
+    picked = pick_diverse_items(list(pool))
+    item_ids = [item.id for item in picked]
 
     # Keywords
     kw_map: dict[int, list[str]] = {}
@@ -99,10 +95,10 @@ def get_today_feed(
             item_id=item.id,
             title=item.title,
             translated_title_ko=item.translated_title_ko,
-            source=source.name,
-            category=source.category,
+            source=item.source.name,
+            category=item.source.category,
             url=item.url,
-            short_reason=f"[{source.category}] Recent from {source.name}",
+            short_reason=f"[{item.source.category}] Recent from {item.source.name}",
             rank=idx,
             saved=False,
             skipped=False,
@@ -113,7 +109,7 @@ def get_today_feed(
             feedback_action=None,
             keywords=kw_map.get(item.id, []),
         )
-        for idx, (item, source) in enumerate(item_source_rows, start=1)
+        for idx, item in enumerate(picked, start=1)
     ]
 
     grouped: dict[str, list[FeedItemOut]] = {}

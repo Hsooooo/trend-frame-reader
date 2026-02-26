@@ -63,6 +63,49 @@ def _pick_next_item(
     return idx, None
 
 
+def pick_diverse_items(items: list[Item]) -> list[Item]:
+    """카테고리 분산 + 도메인 중복 제거 후 최종 피드 아이템 목록 반환."""
+    picked: list[Item] = []
+    used_domains: set[str] = set()
+
+    by_category: dict[str, list[Item]] = defaultdict(list)
+    for item in items:
+        by_category[item.source.category].append(item)
+
+    rng = random.Random()
+    for cat_items in by_category.values():
+        rng.shuffle(cat_items)
+
+    categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
+    target_per_category = max(1, settings.feed_target_items_per_category)
+    per_category_cap = max(target_per_category, settings.feed_max_items_per_category)
+    total_cap = max(per_category_cap, settings.feed_max_items_total)
+    cat_counts = {cat: 0 for cat in categories}
+    cat_cursor = {cat: 0 for cat in categories}
+
+    for _ in range(target_per_category):
+        for category in categories:
+            if len(picked) >= total_cap:
+                break
+            cat_cursor[category], item = _pick_next_item(by_category[category], cat_cursor[category], used_domains)
+            if not item:
+                continue
+            used_domains.add(urlparse(item.canonical_url).netloc)
+            picked.append(item)
+            cat_counts[category] += 1
+
+    for category in categories:
+        while cat_counts[category] < per_category_cap and len(picked) < total_cap:
+            cat_cursor[category], item = _pick_next_item(by_category[category], cat_cursor[category], used_domains)
+            if not item:
+                break
+            used_domains.add(urlparse(item.canonical_url).netloc)
+            picked.append(item)
+            cat_counts[category] += 1
+
+    return picked
+
+
 def generate_feed_for_slot(
     db: Session,
     slot: SlotType,
@@ -113,53 +156,7 @@ def generate_feed_for_slot(
             .limit(max(300, settings.feed_max_items_total * 20))
         ).scalars().all()
 
-        picked = []
-        used_domains = set()
-
-        by_category: dict[str, list[Item]] = defaultdict(list)
-        for item in items:
-            by_category[item.source.category].append(item)
-
-        rng = random.Random()
-        for cat_items in by_category.values():
-            rng.shuffle(cat_items)
-
-        categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
-        target_per_category = max(1, settings.feed_target_items_per_category)
-        per_category_cap = max(target_per_category, settings.feed_max_items_per_category)
-        total_cap = max(per_category_cap, settings.feed_max_items_total)
-        cat_counts = {cat: 0 for cat in categories}
-        cat_cursor = {cat: 0 for cat in categories}
-
-        # Pass 1: spread across categories first, aiming for target_per_category.
-        for _ in range(target_per_category):
-            for category in categories:
-                if len(picked) >= total_cap:
-                    break
-                cat_cursor[category], item = _pick_next_item(
-                    by_category[category],
-                    cat_cursor[category],
-                    used_domains,
-                )
-                if not item:
-                    continue
-                used_domains.add(urlparse(item.canonical_url).netloc)
-                picked.append(item)
-                cat_counts[category] += 1
-
-        # Pass 2: fill remaining capacity up to per-category hard cap.
-        for category in categories:
-            while cat_counts[category] < per_category_cap and len(picked) < total_cap:
-                cat_cursor[category], item = _pick_next_item(
-                    by_category[category],
-                    cat_cursor[category],
-                    used_domains,
-                )
-                if not item:
-                    break
-                used_domains.add(urlparse(item.canonical_url).netloc)
-                picked.append(item)
-                cat_counts[category] += 1
+        picked = pick_diverse_items(list(items))
 
         if len(picked) < settings.feed_min_items:
             fallback = db.execute(select(Item).order_by(desc(Item.score), desc(Item.id)).limit(settings.feed_min_items)).scalars().all()
