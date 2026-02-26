@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from fastapi import APIRouter, Depends, HTTPException
