@@ -19,12 +19,13 @@ from app.schemas import (
     KeywordCloudOut,
     KeywordGraphOut,
     KeywordNeighbor,
+    SimilarityGraphOut,
     TimelineArticle,
     TimelineOut,
 )
 from app.security import get_current_user
 from app.services.events import CURATION_ACTIONS
-from app.services.graph import get_bookmark_keyword_cloud, get_full_graph, get_keyword_graph, get_timeline_articles
+from app.services.graph import get_bookmark_keyword_cloud, get_full_graph, get_keyword_graph, get_similarity_graph, get_timeline_articles
 from app.services.rag import ask_bookmarks
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
@@ -139,6 +140,20 @@ def bookmark_graph(
         article_nodes=[FullGraphArticleNode(**n) for n in result.get("article_nodes", [])],
         edges=[GraphEdge(**e) for e in result.get("edges", [])],
     )
+
+
+@router.get("/graph/similarity", response_model=SimilarityGraphOut)
+def bookmark_similarity_graph(
+    keyword: str = Query(..., min_length=1),
+    threshold: float = Query(default=0.5, ge=0.0, le=1.0),
+    limit: int = Query(default=15, ge=1, le=50),
+    max_articles_per_keyword: int = Query(default=3, ge=1, le=10),
+    user: User = Depends(get_current_user),
+):
+    result = get_similarity_graph(keyword, threshold, limit, max_articles_per_keyword, user_id=user.id)
+    if not result:
+        raise HTTPException(status_code=404, detail="keyword_not_found")
+    return result
 
 
 @router.get("/timeline", response_model=TimelineOut)

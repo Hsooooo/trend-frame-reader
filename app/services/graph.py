@@ -631,6 +631,172 @@ def get_full_graph(keyword: str, depth: int = 1, max_keyword_nodes: int = 0, max
     }
 
 
+def get_similarity_graph(
+    keyword: str,
+    threshold: float = 0.5,
+    limit: int = 15,
+    max_articles_per_keyword: int = 3,
+    user_id: int | None = None,
+) -> dict:
+    """Return a similarity-based graph centered on `keyword` using vector embeddings."""
+    keywords_col = get_keywords_collection()
+    articles_col = get_articles_collection()
+    if keywords_col is None or articles_col is None:
+        return {}
+
+    root_doc = keywords_col.find_one({"keyword": keyword})
+    if root_doc is None:
+        return {}
+
+    root_embedding = root_doc.get("embedding")
+    if root_embedding is None:
+        return {}
+
+    # Build allowed keyword set for user personalization
+    allowed_keywords: set[str] | None = None
+    if user_id is not None:
+        allowed_keywords = _get_user_keywords(articles_col, user_id)
+        if keyword not in allowed_keywords:
+            return {}
+
+    # Try Atlas Vector Search
+    similar_docs: list[dict] = []
+    try:
+        pipeline = [
+            {
+                "$vectorSearch": {
+                    "index": "keyword_vector_index",
+                    "path": "embedding",
+                    "queryVector": root_embedding,
+                    "numCandidates": 100,
+                    "limit": limit + 10,
+                }
+            },
+            {
+                "$project": {
+                    "keyword": 1,
+                    "doc_frequency": 1,
+                    "bookmark_frequency": 1,
+                    "sentiment_score": 1,
+                    "score": {"$meta": "vectorSearchScore"},
+                }
+            },
+        ]
+        cursor = keywords_col.aggregate(pipeline)
+        for doc in cursor:
+            kw = doc.get("keyword")
+            score = doc.get("score", 0.0)
+            if kw == keyword:
+                continue
+            if score < threshold:
+                continue
+            if allowed_keywords is not None and kw not in allowed_keywords:
+                continue
+            similar_docs.append(doc)
+            if len(similar_docs) >= limit:
+                break
+    except Exception:
+        logger.exception("Atlas Vector Search failed for keyword '%s'; falling back to in-memory cosine", keyword)
+        # In-memory cosine fallback
+        try:
+            from app.services.keyword_embeddings import _cosine_similarity
+            cursor = keywords_col.find(
+                {"embedding": {"$exists": True}, "keyword": {"$ne": keyword}},
+                {"keyword": 1, "doc_frequency": 1, "bookmark_frequency": 1, "sentiment_score": 1, "embedding": 1},
+            )
+            candidates: list[tuple[float, dict]] = []
+            for doc in cursor:
+                emb = doc.get("embedding")
+                if emb is None:
+                    continue
+                kw = doc.get("keyword")
+                if allowed_keywords is not None and kw not in allowed_keywords:
+                    continue
+                score = _cosine_similarity(root_embedding, emb)
+                if score >= threshold:
+                    candidates.append((score, doc))
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            for score, doc in candidates[:limit]:
+                doc["score"] = score
+                similar_docs.append(doc)
+        except Exception:
+            logger.exception("In-memory cosine fallback also failed for keyword '%s'", keyword)
+
+    # Build keyword nodes
+    all_keywords: list[tuple[str, float]] = [(keyword, 1.0)] + [
+        (d["keyword"], float(d.get("score", 0.0))) for d in similar_docs
+    ]
+
+    keyword_nodes: list[dict] = []
+    for kw, sim_score in all_keywords:
+        doc = keywords_col.find_one({"keyword": kw}) if kw != keyword else root_doc
+        is_root = kw == keyword
+        keyword_nodes.append({
+            "id": f"kw_{kw}",
+            "keyword": kw,
+            "doc_frequency": doc.get("doc_frequency", 0) if doc else 0,
+            "bookmark_frequency": doc.get("bookmark_frequency", 0) if doc else 0,
+            "sentiment_score": (doc.get("sentiment_score") or 0.0) if doc else 0.0,
+            "similarity_score": sim_score,
+            "is_root": is_root,
+        })
+
+    # Build edges and article nodes
+    edges: list[dict] = []
+    # similarity edges: root → each similar keyword
+    for kw, sim_score in all_keywords[1:]:
+        edges.append({
+            "source": f"kw_{keyword}",
+            "target": f"kw_{kw}",
+            "type": "similarity",
+            "weight": sim_score,
+        })
+
+    # Article nodes for each keyword (root + similar)
+    kw_set = {kw for kw, _ in all_keywords}
+    article_filter: dict = {"keywords": {"$in": list(kw_set)}}
+    if user_id is not None:
+        article_filter["user_id"] = user_id
+
+    article_limit = max_articles_per_keyword * len(kw_set)
+    cursor = articles_col.find(
+        article_filter,
+        {"item_id": 1, "title": 1, "url": 1, "source": 1, "saved_at": 1, "keywords": 1, "_id": 0},
+    ).sort("saved_at", -1).limit(article_limit)
+
+    article_nodes: list[dict] = []
+    for doc in cursor:
+        item_id = doc.get("item_id")
+        if item_id is None:
+            continue
+        saved_at = doc.get("saved_at")
+        saved_at_str = saved_at.isoformat() if isinstance(saved_at, datetime) else str(saved_at) if saved_at else None
+        article_nodes.append({
+            "id": f"item_{item_id}",
+            "item_id": item_id,
+            "title": doc.get("title", ""),
+            "url": doc.get("url", ""),
+            "source": doc.get("source"),
+            "saved_at": saved_at_str,
+            "keywords": doc.get("keywords", []),
+        })
+        for kw in doc.get("keywords", []):
+            if kw in kw_set:
+                edges.append({
+                    "source": f"item_{item_id}",
+                    "target": f"kw_{kw}",
+                    "type": "has_keyword",
+                    "weight": 1.0,
+                })
+
+    return {
+        "root_keyword": keyword,
+        "keyword_nodes": keyword_nodes,
+        "article_nodes": article_nodes,
+        "edges": edges,
+    }
+
+
 def get_timeline_articles(days: int = 30, user_id: int | None = None) -> list[dict]:
     """Return articles saved within the last `days` days, sorted newest first."""
     articles_col = get_articles_collection()

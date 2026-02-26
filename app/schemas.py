@@ -236,3 +236,27 @@ class InsightListOut(BaseModel):
 class InsightAdminListOut(BaseModel):
     total: int
     posts: list[InsightPostAdminOut]
+
+
+class SimilarityGraphKeywordNode(BaseModel):
+    id: str                       # "kw_{keyword}"
+    keyword: str
+    doc_frequency: int = 0
+    bookmark_frequency: int = 0
+    sentiment_score: float = 0.0
+    similarity_score: float = 1.0  # 루트=1.0, 나머지=코사인 유사도
+    is_root: bool = False
+
+
+class SimilarityGraphEdge(BaseModel):
+    source: str
+    target: str
+    type: str                     # "similarity" | "has_keyword"
+    weight: float = 1.0           # similarity: 0~1 float, has_keyword: 1.0
+
+
+class SimilarityGraphOut(BaseModel):
+    root_keyword: str
+    keyword_nodes: list[SimilarityGraphKeywordNode]
+    article_nodes: list[FullGraphArticleNode]
+    edges: list[SimilarityGraphEdge]
