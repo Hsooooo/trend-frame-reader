@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import timedelta
 import random
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
@@ -15,25 +15,6 @@ from app.services.events import CURATION_ACTIONS
 from app.services.utils import utcnow
 
 APP_TZ = ZoneInfo(settings.app_timezone)
-UTC = timezone.utc
-
-
-def current_period_info(now_utc: datetime) -> tuple[date, SlotType, datetime]:
-    """Returns (feed_date, slot, period_start_utc) for the current rolling period."""
-    now_local = now_utc.astimezone(APP_TZ)
-    today = now_local.date()
-    hour = now_local.hour
-
-    if 6 <= hour < 18:
-        start_local = datetime.combine(today, time(6, 0), APP_TZ)
-        return today, SlotType.AM, start_local.astimezone(UTC)
-    elif hour >= 18:
-        start_local = datetime.combine(today, time(18, 0), APP_TZ)
-        return today, SlotType.PM, start_local.astimezone(UTC)
-    else:  # 00:00 ~ 05:59 — night period started yesterday
-        yesterday = today - timedelta(days=1)
-        start_local = datetime.combine(yesterday, time(18, 0), APP_TZ)
-        return yesterday, SlotType.PM, start_local.astimezone(UTC)
 
 
 def _reason(item: Item) -> str:
@@ -63,56 +44,7 @@ def _pick_next_item(
     return idx, None
 
 
-def pick_diverse_items(items: list[Item]) -> list[Item]:
-    """카테고리 분산 + 도메인 중복 제거 후 최종 피드 아이템 목록 반환."""
-    picked: list[Item] = []
-    used_domains: set[str] = set()
-
-    by_category: dict[str, list[Item]] = defaultdict(list)
-    for item in items:
-        by_category[item.source.category].append(item)
-
-    rng = random.Random()
-    for cat_items in by_category.values():
-        rng.shuffle(cat_items)
-
-    categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
-    target_per_category = max(1, settings.feed_target_items_per_category)
-    per_category_cap = max(target_per_category, settings.feed_max_items_per_category)
-    total_cap = max(per_category_cap, settings.feed_max_items_total)
-    cat_counts = {cat: 0 for cat in categories}
-    cat_cursor = {cat: 0 for cat in categories}
-
-    for _ in range(target_per_category):
-        for category in categories:
-            if len(picked) >= total_cap:
-                break
-            cat_cursor[category], item = _pick_next_item(by_category[category], cat_cursor[category], used_domains)
-            if not item:
-                continue
-            used_domains.add(urlparse(item.canonical_url).netloc)
-            picked.append(item)
-            cat_counts[category] += 1
-
-    for category in categories:
-        while cat_counts[category] < per_category_cap and len(picked) < total_cap:
-            cat_cursor[category], item = _pick_next_item(by_category[category], cat_cursor[category], used_domains)
-            if not item:
-                break
-            used_domains.add(urlparse(item.canonical_url).netloc)
-            picked.append(item)
-            cat_counts[category] += 1
-
-    return picked
-
-
-def generate_feed_for_slot(
-    db: Session,
-    slot: SlotType,
-    feed_date: date | None = None,
-    period_start: datetime | None = None,
-    user_id: int | None = None,
-):
+def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = None):
     started = utcnow()
     job = Job(job_type=f"feed_generation_{slot.value}", started_at=started, status="running")
     db.add(job)
@@ -120,16 +52,15 @@ def generate_feed_for_slot(
 
     try:
         now = utcnow()
-        if feed_date is None or period_start is None:
-            feed_date, _slot, period_start = current_period_info(now)
+        today = now.astimezone(APP_TZ).date()
 
-        existing = db.execute(select(Feed).where(and_(Feed.feed_date == feed_date, Feed.slot == slot))).scalar_one_or_none()
+        existing = db.execute(select(Feed).where(and_(Feed.feed_date == today, Feed.slot == slot))).scalar_one_or_none()
         if existing:
             db.execute(delete(FeedItem).where(FeedItem.feed_id == existing.id))
             feed = existing
             feed.generated_at = now
         else:
-            feed = Feed(feed_date=feed_date, slot=slot, generated_at=now)
+            feed = Feed(feed_date=today, slot=slot, generated_at=now)
             db.add(feed)
             db.flush()
 
@@ -148,7 +79,7 @@ def generate_feed_for_slot(
             .join(latest_feedback, Feedback.id == latest_feedback.c.max_id)
         )
 
-        cutoff = period_start
+        cutoff = now - timedelta(hours=settings.ingestion_lookback_hours)
         items = db.execute(
             select(Item)
             .where(Item.fetched_at >= cutoff, Item.id.not_in(excluded_items))
@@ -156,7 +87,53 @@ def generate_feed_for_slot(
             .limit(max(300, settings.feed_max_items_total * 20))
         ).scalars().all()
 
-        picked = pick_diverse_items(list(items))
+        picked = []
+        used_domains = set()
+
+        by_category: dict[str, list[Item]] = defaultdict(list)
+        for item in items:
+            by_category[item.source.category].append(item)
+
+        rng = random.Random()
+        for cat_items in by_category.values():
+            rng.shuffle(cat_items)
+
+        categories = sorted(by_category.keys(), key=lambda c: by_category[c][0].score if by_category[c] else 0, reverse=True)
+        target_per_category = max(1, settings.feed_target_items_per_category)
+        per_category_cap = max(target_per_category, settings.feed_max_items_per_category)
+        total_cap = max(per_category_cap, settings.feed_max_items_total)
+        cat_counts = {cat: 0 for cat in categories}
+        cat_cursor = {cat: 0 for cat in categories}
+
+        # Pass 1: spread across categories first, aiming for target_per_category.
+        for _ in range(target_per_category):
+            for category in categories:
+                if len(picked) >= total_cap:
+                    break
+                cat_cursor[category], item = _pick_next_item(
+                    by_category[category],
+                    cat_cursor[category],
+                    used_domains,
+                )
+                if not item:
+                    continue
+                used_domains.add(urlparse(item.canonical_url).netloc)
+                picked.append(item)
+                cat_counts[category] += 1
+
+        # Pass 2: fill remaining capacity up to per-category hard cap.
+        for category in categories:
+            while cat_counts[category] < per_category_cap and len(picked) < total_cap:
+                cat_cursor[category], item = _pick_next_item(
+                    by_category[category],
+                    cat_cursor[category],
+                    used_domains,
+                )
+                if not item:
+                    break
+                used_domains.add(urlparse(item.canonical_url).netloc)
+                picked.append(item)
+                cat_counts[category] += 1
 
         if len(picked) < settings.feed_min_items:
             fallback = db.execute(select(Item).order_by(desc(Item.score), desc(Item.id)).limit(settings.feed_min_items)).scalars().all()
