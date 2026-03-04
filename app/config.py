@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     mongodb_database: str = "trend_frame_graph"
     openai_embedding_model: str = "text-embedding-3-small"
     rag_top_k: int = 5
+    rag_bm25_index: str = "search_index"
+    rag_vec_candidates: int = 20
+    rag_bm25_candidates: int = 20
+    rag_w_vector: float = 0.6
+    rag_w_bm25: float = 0.4
+    rag_min_evidence: int = 2
+    rag_similarity_threshold: float = 0.3
     graph_backfill_batch_size: int = 50
     google_client_id: str = ""
     google_client_secret: str = ""

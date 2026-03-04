@@ -63,6 +63,79 @@ def search_similar_bookmarks(query_embedding: list[float], top_k: int = 5, user_
         return []
 
 
+def search_bm25_bookmarks(query: str, top_k: int = 20, user_id: int | None = None) -> list[dict]:
+    collection = get_articles_collection()
+    if collection is None:
+        return []
+
+    text_clause = {
+        "text": {
+            "query": query,
+            "path": ["title", "summary", "keywords"],
+        }
+    }
+    search_stage = (
+        {"compound": {"must": [text_clause], "filter": [{"equals": {"path": "user_id", "value": user_id}}]}}
+        if user_id is not None
+        else text_clause
+    )
+
+    pipeline = [
+        {"$search": {"index": settings.rag_bm25_index, **search_stage}},
+        {"$limit": top_k},
+        {"$project": {
+            "item_id": 1, "title": 1, "summary": 1, "url": 1, "source": 1,
+            "bm25_score": {"$meta": "searchScore"},
+        }},
+    ]
+
+    try:
+        results = list(collection.aggregate(pipeline))
+        return [
+            {
+                "item_id": r.get("item_id"),
+                "title": r.get("title"),
+                "summary": r.get("summary"),
+                "url": r.get("url"),
+                "source": r.get("source"),
+                "bm25_score": r.get("bm25_score", 0.0),
+            }
+            for r in results
+        ]
+    except Exception:
+        logger.exception("Failed to run BM25 search pipeline")
+        return []
+
+
+def merge_and_rank(
+    vec_results: list[dict],
+    bm25_results: list[dict],
+    top_k: int,
+) -> list[dict]:
+    scores: dict[str, dict] = {}
+
+    for r in vec_results:
+        key = str(r["item_id"])
+        scores[key] = {**r, "vec_score": r.get("similarity_score", 0.0), "bm25_score": 0.0}
+
+    max_bm25 = max((r["bm25_score"] for r in bm25_results), default=1.0) or 1.0
+    for r in bm25_results:
+        key = str(r["item_id"])
+        norm_bm25 = r["bm25_score"] / max_bm25
+        if key in scores:
+            scores[key]["bm25_score"] = norm_bm25
+        else:
+            scores[key] = {**r, "vec_score": 0.0, "bm25_score": norm_bm25, "similarity_score": 0.0}
+
+    w_vec = settings.rag_w_vector
+    w_bm25 = settings.rag_w_bm25
+    for v in scores.values():
+        v["final_score"] = w_vec * v["vec_score"] + w_bm25 * v["bm25_score"]
+
+    ranked = sorted(scores.values(), key=lambda x: x["final_score"], reverse=True)
+    return ranked[:top_k]
+
+
 def build_rag_context(results: list[dict]) -> str:
     lines: list[str] = []
     for i, r in enumerate(results, start=1):
@@ -116,11 +189,19 @@ def ask_bookmarks(query: str, top_k: int | None = None, user_id: int | None = No
     if embedding is None:
         return {"answer": "임베딩 생성에 실패했습니다.", "sources": []}
 
-    results = search_similar_bookmarks(embedding, top_k=top_k, user_id=user_id)
-    if not results:
-        return {"answer": "관련 북마크를 찾지 못했습니다.", "sources": []}
+    vec_results = search_similar_bookmarks(embedding, top_k=settings.rag_vec_candidates, user_id=user_id)
+    bm25_results = search_bm25_bookmarks(query, top_k=settings.rag_bm25_candidates, user_id=user_id)
 
-    context = build_rag_context(results)
+    results = merge_and_rank(vec_results, bm25_results, top_k=top_k)
+
+    qualified = [r for r in results if r["final_score"] >= settings.rag_similarity_threshold]
+    if len(qualified) < settings.rag_min_evidence:
+        return {
+            "answer": "내 북마크에서 확실한 근거를 찾지 못했어. 관련 북마크를 더 저장하거나, 질문을 더 구체화해줘.",
+            "sources": [],
+        }
+
+    context = build_rag_context(qualified)
     answer = generate_rag_answer(query, context)
 
     sources = [
@@ -128,9 +209,9 @@ def ask_bookmarks(query: str, top_k: int | None = None, user_id: int | None = No
             "item_id": r.get("item_id"),
             "title": r.get("title"),
             "url": r.get("url"),
-            "similarity": r.get("similarity_score"),
+            "similarity": r.get("final_score"),
         }
-        for r in results
+        for r in qualified
     ]
 
     return {"answer": answer, "sources": sources}
