@@ -9,8 +9,11 @@ import yake
 from kiwipiepy import Kiwi
 
 try:
-    from openai import RateLimitError
+    from openai import APITimeoutError, RateLimitError
 except ImportError:  # pragma: no cover - local test environments may not have openai installed
+    class APITimeoutError(Exception):
+        pass
+
     class RateLimitError(Exception):
         pass
 
@@ -20,6 +23,7 @@ from app.services.utils import detect_language
 
 logger = logging.getLogger(__name__)
 _LLM_RATE_LIMITED_UNTIL: datetime | None = None
+_FALLBACK_LLM_UNAVAILABLE_UNTIL: datetime | None = None
 
 # 한국어 명사 추출용 — 모듈 수준에서 한 번만 초기화
 _kiwi = Kiwi()
@@ -67,6 +71,7 @@ def _extract_ko_keywords(text: str, max_keywords: int) -> list[dict]:
 def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) -> list[dict] | None:
     """OpenAI로 키워드 추출. 실패 시 None 반환 → fallback."""
     global _LLM_RATE_LIMITED_UNTIL
+    global _FALLBACK_LLM_UNAVAILABLE_UNTIL
 
     client = get_openai_client()
     if not client:
@@ -74,10 +79,19 @@ def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) ->
 
     primary_model = settings.openai_keyword_model.strip()
     fallback_model = settings.openai_keyword_fallback_model.strip()
+    fallback_available = (
+        bool(fallback_model)
+        and fallback_model != primary_model
+        and not _is_fallback_temporarily_unavailable()
+    )
     if _LLM_RATE_LIMITED_UNTIL and datetime.now(UTC) < _LLM_RATE_LIMITED_UNTIL:
-        if fallback_model and fallback_model != primary_model:
+        if fallback_available:
             try:
                 return _extract_keywords_with_model(client, fallback_model, title, summary, max_keywords)
+            except APITimeoutError:
+                _mark_fallback_temporarily_unavailable()
+                logger.warning("Fallback keyword model timed out; using statistical extraction temporarily")
+                return None
             except Exception:
                 logger.warning("Fallback keyword extraction failed", exc_info=True)
                 return None
@@ -89,13 +103,17 @@ def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) ->
         if "rate limit" in str(exc).lower():
             retry_after = _parse_retry_after_seconds(str(exc)) or 60.0
             _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
-            if fallback_model and fallback_model != primary_model:
+            if fallback_available:
                 logger.warning(
                     "Primary keyword model rate-limited; retrying with fallback model %s",
                     fallback_model,
                 )
                 try:
                     return _extract_keywords_with_model(client, fallback_model, title, summary, max_keywords)
+                except APITimeoutError:
+                    _mark_fallback_temporarily_unavailable()
+                    logger.warning("Fallback keyword model timed out; using statistical extraction temporarily")
+                    return None
                 except Exception:
                     logger.warning("Fallback keyword extraction failed", exc_info=True)
                     return None
@@ -165,6 +183,16 @@ def _parse_retry_after_seconds(message: str) -> float | None:
 
 def _uses_default_temperature_only(model: str) -> bool:
     return model.strip().lower().startswith("gpt-5")
+
+
+def _is_fallback_temporarily_unavailable() -> bool:
+    return _FALLBACK_LLM_UNAVAILABLE_UNTIL is not None and datetime.now(UTC) < _FALLBACK_LLM_UNAVAILABLE_UNTIL
+
+
+def _mark_fallback_temporarily_unavailable() -> None:
+    global _FALLBACK_LLM_UNAVAILABLE_UNTIL
+    cooldown_seconds = max(30.0, settings.openai_timeout_seconds * 6)
+    _FALLBACK_LLM_UNAVAILABLE_UNTIL = datetime.now(UTC) + timedelta(seconds=cooldown_seconds)
 
 
 def extract_keywords(text: str, max_keywords: int = 10, title: str = "", summary: str | None = None) -> list[dict]:

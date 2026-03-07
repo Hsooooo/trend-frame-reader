@@ -6,8 +6,11 @@ import re
 from datetime import UTC, datetime, timedelta
 
 try:
-    from openai import RateLimitError
+    from openai import APITimeoutError, RateLimitError
 except ImportError:  # pragma: no cover - local test environments may not have openai installed
+    class APITimeoutError(Exception):
+        pass
+
     class RateLimitError(Exception):
         pass
 
@@ -69,6 +72,7 @@ _THEME_PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 _LLM_RATE_LIMITED_UNTIL: datetime | None = None
+_FALLBACK_LLM_UNAVAILABLE_UNTIL: datetime | None = None
 
 
 class MarketEntityRateLimitedError(Exception):
@@ -236,6 +240,7 @@ def _extract_llm_entities(
     raise_on_rate_limit: bool = False,
 ) -> dict | None:
     global _LLM_RATE_LIMITED_UNTIL
+    global _FALLBACK_LLM_UNAVAILABLE_UNTIL
 
     client = get_openai_client()
     if client is None:
@@ -243,11 +248,20 @@ def _extract_llm_entities(
 
     primary_model = settings.openai_market_entity_model.strip()
     fallback_model = settings.openai_market_entity_fallback_model.strip()
+    fallback_available = (
+        bool(fallback_model)
+        and fallback_model != primary_model
+        and not _is_fallback_temporarily_unavailable()
+    )
 
     if _LLM_RATE_LIMITED_UNTIL is not None and datetime.now(UTC) < _LLM_RATE_LIMITED_UNTIL:
-        if fallback_model and fallback_model != primary_model:
+        if fallback_available:
             try:
                 return _call_llm_entity_model(client, fallback_model, title, summary)
+            except APITimeoutError:
+                _mark_fallback_temporarily_unavailable()
+                logger.warning("Fallback market entity model timed out; using heuristic only temporarily")
+                return None
             except Exception:
                 logger.warning("Fallback market entity extraction failed", exc_info=True)
                 return None
@@ -261,13 +275,17 @@ def _extract_llm_entities(
     except RateLimitError as exc:
         retry_after = _parse_retry_after_seconds(str(exc)) or 60.0
         _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
-        if fallback_model and fallback_model != primary_model:
+        if fallback_available:
             logger.warning(
                 "Primary market entity model rate-limited; retrying with fallback model %s",
                 fallback_model,
             )
             try:
                 return _call_llm_entity_model(client, fallback_model, title, summary)
+            except APITimeoutError:
+                _mark_fallback_temporarily_unavailable()
+                logger.warning("Fallback market entity model timed out; using heuristic only temporarily")
+                return None
             except RateLimitError as fallback_exc:
                 retry_after = _parse_retry_after_seconds(str(fallback_exc)) or retry_after
                 _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
@@ -382,6 +400,16 @@ def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
 
 def _uses_default_temperature_only(model: str) -> bool:
     return model.strip().lower().startswith("gpt-5")
+
+
+def _is_fallback_temporarily_unavailable() -> bool:
+    return _FALLBACK_LLM_UNAVAILABLE_UNTIL is not None and datetime.now(UTC) < _FALLBACK_LLM_UNAVAILABLE_UNTIL
+
+
+def _mark_fallback_temporarily_unavailable() -> None:
+    global _FALLBACK_LLM_UNAVAILABLE_UNTIL
+    cooldown_seconds = max(30.0, settings.openai_timeout_seconds * 6)
+    _FALLBACK_LLM_UNAVAILABLE_UNTIL = datetime.now(UTC) + timedelta(seconds=cooldown_seconds)
 
 
 def extract_market_entities(

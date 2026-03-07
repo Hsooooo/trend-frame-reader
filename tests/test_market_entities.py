@@ -96,6 +96,56 @@ def test_extract_market_entities_accepts_string_confidence_labels(monkeypatch):
     assert result["entity_extraction_status"] == "heuristic+llm"
 
 
+def test_extract_market_entities_skips_timed_out_fallback_temporarily(monkeypatch):
+    class FakeTimeoutError(Exception):
+        pass
+
+    class DummyCompletions:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            raise FakeTimeoutError("Request timed out.")
+
+    dummy_completions = DummyCompletions()
+    dummy_client = type(
+        "DummyClient",
+        (),
+        {"chat": type("DummyChat", (), {"completions": dummy_completions})()},
+    )()
+
+    monkeypatch.setattr(market_entities, "APITimeoutError", FakeTimeoutError)
+    monkeypatch.setattr(market_entities, "get_openai_client", lambda: dummy_client)
+    monkeypatch.setattr(
+        market_entities,
+        "_LLM_RATE_LIMITED_UNTIL",
+        datetime.now(UTC) + timedelta(seconds=30),
+    )
+    monkeypatch.setattr(market_entities, "_FALLBACK_LLM_UNAVAILABLE_UNTIL", None)
+
+    first = extract_market_entities(
+        title="Apple (AAPL) expands AI features after earnings beat",
+        summary="The iPhone maker also raised guidance for its services business.",
+    )
+    second = extract_market_entities(
+        title="Apple (AAPL) expands AI features after earnings beat",
+        summary="The iPhone maker also raised guidance for its services business.",
+    )
+
+    assert any(ticker["symbol"] == "AAPL" for ticker in first["tickers"])
+    assert any(ticker["symbol"] == "AAPL" for ticker in second["tickers"])
+    assert dummy_completions.calls == 1
+    assert market_entities._FALLBACK_LLM_UNAVAILABLE_UNTIL is not None
+
+    monkeypatch.setattr(
+        market_entities,
+        "_LLM_RATE_LIMITED_UNTIL",
+        datetime.now(UTC) - timedelta(seconds=1),
+    )
+    monkeypatch.setattr(market_entities, "_FALLBACK_LLM_UNAVAILABLE_UNTIL", None)
+
+
 def test_market_entities_omit_temperature_for_gpt5_models():
     assert market_entities._uses_default_temperature_only("gpt-5-mini") is True
     assert market_entities._uses_default_temperature_only("gpt-4o-mini") is False
