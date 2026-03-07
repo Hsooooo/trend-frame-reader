@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime, timedelta
+
+try:
+    from openai import RateLimitError
+except ImportError:  # pragma: no cover - local test environments may not have openai installed
+    class RateLimitError(Exception):
+        pass
 
 from app.config import settings
 from app.services.openai_client import get_openai_client
 
 logger = logging.getLogger(__name__)
+MARKET_EXTRACTION_VERSION = "market-v1"
 
 _COMPANY_MASTER: list[dict[str, object]] = [
     {"canonical_name": "Apple", "ticker": "AAPL", "exchange": "NASDAQ", "aliases": ["apple", "apple inc", "apple inc."]},
@@ -59,6 +67,14 @@ _THEME_PATTERNS: dict[str, re.Pattern[str]] = {
     "fintech": re.compile(r"\bpayments\b|\bfintech\b|\bdigital bank\b|\bcrypto\b", re.I),
     "defense": re.compile(r"\bdefense\b|\bmilitary\b|\bmissile\b|\bweapon\b", re.I),
 }
+
+_LLM_RATE_LIMITED_UNTIL: datetime | None = None
+
+
+class MarketEntityRateLimitedError(Exception):
+    def __init__(self, retry_after_seconds: float):
+        self.retry_after_seconds = max(0.0, retry_after_seconds)
+        super().__init__(f"market_entity_rate_limited:{self.retry_after_seconds:.2f}")
 
 
 def _unique_by(rows: list[dict], key: str) -> list[dict]:
@@ -177,9 +193,32 @@ def _strip_code_fences(raw: str) -> str:
     return raw.strip()
 
 
-def _extract_llm_entities(title: str, summary: str | None) -> dict | None:
+def _parse_retry_after_seconds(message: str) -> float | None:
+    match = re.search(r"Please try again in\s+([0-9]+(?:\.[0-9]+)?)s", message, re.I)
+    if match is None:
+        return None
+    try:
+        return max(0.0, float(match.group(1)))
+    except ValueError:
+        return None
+
+
+def _extract_llm_entities(
+    title: str,
+    summary: str | None,
+    *,
+    raise_on_rate_limit: bool = False,
+) -> dict | None:
+    global _LLM_RATE_LIMITED_UNTIL
+
     client = get_openai_client()
     if client is None:
+        return None
+
+    if _LLM_RATE_LIMITED_UNTIL is not None and datetime.now(UTC) < _LLM_RATE_LIMITED_UNTIL:
+        retry_after = (_LLM_RATE_LIMITED_UNTIL - datetime.now(UTC)).total_seconds()
+        if raise_on_rate_limit:
+            raise MarketEntityRateLimitedError(retry_after)
         return None
 
     summary_part = f"\nSummary: {summary.strip()}" if summary and summary.strip() else ""
@@ -215,6 +254,16 @@ def _extract_llm_entities(title: str, summary: str | None) -> dict | None:
         if not isinstance(payload, dict):
             return None
         return payload
+    except RateLimitError as exc:
+        retry_after = _parse_retry_after_seconds(str(exc)) or 60.0
+        _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
+        logger.warning(
+            "LLM market entity extraction rate-limited; using heuristic only for %.2fs",
+            retry_after,
+        )
+        if raise_on_rate_limit:
+            raise MarketEntityRateLimitedError(retry_after) from exc
+        return None
     except Exception:
         logger.warning("LLM market entity extraction failed", exc_info=True)
         return None
@@ -277,14 +326,23 @@ def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
     return _unique_by(normalized, key_map[kind])
 
 
-def extract_market_entities(title: str, summary: str | None = None) -> dict:
+def extract_market_entities(
+    title: str,
+    summary: str | None = None,
+    *,
+    raise_on_rate_limit: bool = False,
+) -> dict:
     text = "\n".join(part for part in [title.strip(), (summary or "").strip()] if part)
     companies, tickers = _extract_from_master(text)
     events = _extract_events(text)
     themes = _extract_themes(text)
 
     status = "heuristic"
-    llm_payload = _extract_llm_entities(title, summary)
+    llm_payload = _extract_llm_entities(
+        title,
+        summary,
+        raise_on_rate_limit=raise_on_rate_limit,
+    )
     if llm_payload:
         companies = _unique_by(companies + _normalize_llm_rows(llm_payload.get("companies"), "companies"), "canonical_name")
         tickers = _unique_by(tickers + _normalize_llm_rows(llm_payload.get("tickers"), "tickers"), "symbol")
@@ -306,6 +364,6 @@ def extract_market_entities(title: str, summary: str | None = None) -> dict:
         "events": events,
         "themes": themes,
         "entity_extraction_status": status,
-        "extraction_version": "market-v1",
+        "extraction_version": MARKET_EXTRACTION_VERSION,
         "extraction_confidence": round(max(confidence_values), 2) if confidence_values else 0.0,
     }

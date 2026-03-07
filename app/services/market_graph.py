@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Feedback, FeedbackAction, Item, ItemKeyword, Source
 from app.mongo import get_market_articles_collection
-from app.services.market_entities import extract_market_entities
+from app.services.market_entities import MARKET_EXTRACTION_VERSION, extract_market_entities
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,18 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if isinstance(value, datetime) else None
 
 
-def build_market_article_doc(item: Item, source: Source | None, keywords: list[str]) -> dict:
-    entities = extract_market_entities(item.title, item.summary)
+def build_market_article_doc(
+    item: Item,
+    source: Source | None,
+    keywords: list[str],
+    *,
+    raise_on_rate_limit: bool = False,
+) -> dict:
+    entities = extract_market_entities(
+        item.title,
+        item.summary,
+        raise_on_rate_limit=raise_on_rate_limit,
+    )
     return {
         "_id": f"item_{item.id}",
         "item_id": item.id,
@@ -42,13 +52,42 @@ def build_market_article_doc(item: Item, source: Source | None, keywords: list[s
     }
 
 
-def sync_market_article(item: Item, source: Source | None, keywords: list[str]) -> bool:
+def sync_market_article(
+    item: Item,
+    source: Source | None,
+    keywords: list[str],
+    *,
+    raise_on_rate_limit: bool = False,
+) -> bool:
     collection = get_market_articles_collection()
     if collection is None:
         return False
-    doc = build_market_article_doc(item, source, keywords)
+    doc = build_market_article_doc(
+        item,
+        source,
+        keywords,
+        raise_on_rate_limit=raise_on_rate_limit,
+    )
     collection.update_one({"_id": doc["_id"]}, {"$set": doc}, upsert=True)
     return True
+
+
+def get_existing_market_article_ids(item_ids: list[int]) -> set[int]:
+    collection = get_market_articles_collection()
+    if collection is None or not item_ids:
+        return set()
+    rows = collection.find(
+        {
+            "item_id": {"$in": item_ids},
+            "extraction_version": MARKET_EXTRACTION_VERSION,
+        },
+        {"item_id": 1},
+    )
+    return {
+        int(row.get("item_id"))
+        for row in rows
+        if row.get("item_id") is not None
+    }
 
 
 def backfill_market_graph(db: Session, limit: int | None = None) -> dict:

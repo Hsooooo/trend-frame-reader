@@ -29,10 +29,17 @@ from app.services.graph import backfill_graph
 from app.services.insights import generate_draft, publish_post, unpublish_post
 from app.services.ingestion import backfill_rss_published_at
 from app.services.keyword_embeddings import backfill_keyword_embeddings
-from app.services.market_graph import backfill_market_graph
+from app.services.market_backfill_jobs import (
+    ACTIVE_MARKET_GRAPH_BACKFILL_STATUSES,
+    create_or_reuse_market_backfill_job,
+    get_latest_market_backfill_job,
+    get_market_backfill_job,
+    serialize_market_backfill_job,
+)
 from app.mongo import get_keywords_collection
 from app.security import get_current_user, require_owner
 from app.services.keywords import build_keyword_text, extract_keywords
+from app.tasks import schedule_market_backfill_job
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 APP_TZ = ZoneInfo(settings.app_timezone)
@@ -311,11 +318,29 @@ def admin_backfill_graph(
 @router.post("/market/backfill", response_model=MarketGraphBackfillOut)
 def admin_backfill_market_graph(
     limit: int = Query(default=0, ge=0, le=5000),
+    user: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    job, _ = create_or_reuse_market_backfill_job(
+        db,
+        requested_by_user_id=user.id,
+        limit=limit or None,
+    )
+    if job.status in ACTIVE_MARKET_GRAPH_BACKFILL_STATUSES:
+        schedule_market_backfill_job(job.id, job.paused_until)
+    return MarketGraphBackfillOut(**serialize_market_backfill_job(job))
+
+
+@router.get("/market/backfill", response_model=MarketGraphBackfillOut)
+def admin_get_market_backfill_status(
+    job_id: int | None = Query(default=None, ge=1),
     _: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    result = backfill_market_graph(db, limit=limit or None)
-    return MarketGraphBackfillOut(**result)
+    job = get_market_backfill_job(db, job_id) if job_id is not None else get_latest_market_backfill_job(db)
+    if job is None:
+        raise HTTPException(status_code=404, detail="market_backfill_job_not_found")
+    return MarketGraphBackfillOut(**serialize_market_backfill_job(job))
 
 
 @router.post("/backfill-rss-published-at", response_model=RssPublishedAtBackfillOut)

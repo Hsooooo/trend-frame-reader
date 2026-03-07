@@ -156,10 +156,19 @@ class GraphBackfillOut(BaseModel):
 
 
 class MarketGraphBackfillOut(BaseModel):
+    job_id: int
+    job_type: str
+    total: int
     processed: int
     synced: int
     failed: int
     status: str
+    last_item_id: int | None = None
+    limit: int | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    paused_until: datetime | None = None
+    error_message: str | None = None
 
 
 class FullGraphKeywordNode(BaseModel):
