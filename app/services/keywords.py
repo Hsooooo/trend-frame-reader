@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime, timedelta
 
 import yake
 from kiwipiepy import Kiwi
@@ -12,6 +13,7 @@ from app.services.openai_client import get_openai_client
 from app.services.utils import detect_language
 
 logger = logging.getLogger(__name__)
+_LLM_RATE_LIMITED_UNTIL: datetime | None = None
 
 # 한국어 명사 추출용 — 모듈 수준에서 한 번만 초기화
 _kiwi = Kiwi()
@@ -58,8 +60,13 @@ def _extract_ko_keywords(text: str, max_keywords: int) -> list[dict]:
 
 def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) -> list[dict] | None:
     """OpenAI로 키워드 추출. 실패 시 None 반환 → fallback."""
+    global _LLM_RATE_LIMITED_UNTIL
+
     client = get_openai_client()
     if not client:
+        return None
+
+    if _LLM_RATE_LIMITED_UNTIL and datetime.now(UTC) < _LLM_RATE_LIMITED_UNTIL:
         return None
 
     summary_part = f"\n요약: {summary.strip()}" if summary and summary.strip() else ""
@@ -100,8 +107,21 @@ def _extract_llm_keywords(title: str, summary: str | None, max_keywords: int) ->
             for i, kw in enumerate(keywords[:max_keywords])
             if isinstance(kw, str) and 1 <= len(kw.strip()) <= 50
         ]
-    except Exception:
+    except Exception as exc:
+        if "rate limit" in str(exc).lower():
+            retry_after = _parse_retry_after_seconds(str(exc)) or 60.0
+            _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
         logger.warning("OpenAI keyword extraction failed", exc_info=True)
+        return None
+
+
+def _parse_retry_after_seconds(message: str) -> float | None:
+    match = re.search(r"Please try again in ([0-9]+(?:\.[0-9]+)?)s", message)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
         return None
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Item, ItemKeyword, Job, Source, SourceType
+from app.services.feed_catalog import is_stock_feed_category
 from app.services.market_graph import sync_market_article
 from app.services.keywords import extract_keywords, build_keyword_text
 from app.services.ranking import compute_score
@@ -333,7 +334,7 @@ def run_ingestion(db: Session) -> dict:
 
                 language = detect_language(obj["title"])
                 translated_title_ko = None
-                if language != "ko":
+                if language != "ko" and not is_stock_feed_category(source.category):
                     translated_title_ko = translate_title_to_korean(obj["title"])
 
                 item = Item(
