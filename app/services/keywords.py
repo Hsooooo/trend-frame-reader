@@ -121,9 +121,9 @@ def _extract_keywords_with_model(
         f"- JSON 배열로만 출력 (설명 없이)\n"
         f"\n제목: {title.strip()}{summary_part}"
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    request_kwargs = {
+        "model": model,
+        "messages": [
             {
                 "role": "system",
                 "content": (
@@ -134,9 +134,12 @@ def _extract_keywords_with_model(
             },
             {"role": "user", "content": prompt},
         ],
-        temperature=0,
-        timeout=settings.openai_timeout_seconds,
-    )
+        "timeout": settings.openai_timeout_seconds,
+    }
+    if not _uses_default_temperature_only(model):
+        request_kwargs["temperature"] = 0
+
+    response = client.chat.completions.create(**request_kwargs)
     raw = response.choices[0].message.content or ""
     raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
     raw = re.sub(r"\s*```$", "", raw).strip()
@@ -158,6 +161,10 @@ def _parse_retry_after_seconds(message: str) -> float | None:
         return float(match.group(1))
     except ValueError:
         return None
+
+
+def _uses_default_temperature_only(model: str) -> bool:
+    return model.strip().lower().startswith("gpt-5")
 
 
 def extract_keywords(text: str, max_keywords: int = 10, title: str = "", summary: str | None = None) -> list[dict]:

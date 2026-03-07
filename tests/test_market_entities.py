@@ -94,3 +94,8 @@ def test_extract_market_entities_accepts_string_confidence_labels(monkeypatch):
     assert apple_company["confidence"] >= 0.8
     assert ai_theme["confidence"] > 0.0
     assert result["entity_extraction_status"] == "heuristic+llm"
+
+
+def test_market_entities_omit_temperature_for_gpt5_models():
+    assert market_entities._uses_default_temperature_only("gpt-5-mini") is True
+    assert market_entities._uses_default_temperature_only("gpt-4o-mini") is False

@@ -298,9 +298,9 @@ def _call_llm_entity_model(client, model: str, title: str, summary: str | None) 
         "Focus on publicly traded U.S. companies and only include items directly supported by the text.\n"
         f"\nTitle: {title.strip()}{summary_part}"
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    request_kwargs = {
+        "model": model,
+        "messages": [
             {
                 "role": "system",
                 "content": (
@@ -310,9 +310,12 @@ def _call_llm_entity_model(client, model: str, title: str, summary: str | None) 
             },
             {"role": "user", "content": prompt},
         ],
-        temperature=0,
-        timeout=settings.openai_timeout_seconds,
-    )
+        "timeout": settings.openai_timeout_seconds,
+    }
+    if not _uses_default_temperature_only(model):
+        request_kwargs["temperature"] = 0
+
+    response = client.chat.completions.create(**request_kwargs)
     raw = _strip_code_fences(response.choices[0].message.content or "")
     payload = json.loads(raw)
     if not isinstance(payload, dict):
@@ -375,6 +378,10 @@ def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
         "themes": "name",
     }
     return _unique_by(normalized, key_map[kind])
+
+
+def _uses_default_temperature_only(model: str) -> bool:
+    return model.strip().lower().startswith("gpt-5")
 
 
 def extract_market_entities(
