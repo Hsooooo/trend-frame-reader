@@ -165,6 +165,7 @@ class GraphBackfillOut(BaseModel):
 class MarketGraphBackfillOut(BaseModel):
     job_id: int
     job_type: str
+    scope: str
     total: int
     processed: int
     synced: int

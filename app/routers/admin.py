@@ -4,6 +4,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import case, cast, Float as SAFloat, func, select, text
 from sqlalchemy.orm import Session
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
@@ -318,14 +320,19 @@ def admin_backfill_graph(
 @router.post("/market/backfill", response_model=MarketGraphBackfillOut)
 def admin_backfill_market_graph(
     limit: int = Query(default=0, ge=0, le=5000),
+    scope: Literal["bookmarks", "all"] = Query(default="bookmarks"),
     user: User = Depends(require_owner),
     db: Session = Depends(get_db),
 ):
-    job, _ = create_or_reuse_market_backfill_job(
-        db,
-        requested_by_user_id=user.id,
-        limit=limit or None,
-    )
+    try:
+        job, _ = create_or_reuse_market_backfill_job(
+            db,
+            requested_by_user_id=user.id,
+            scope=scope,
+            limit=limit or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     if job.status in ACTIVE_MARKET_GRAPH_BACKFILL_STATUSES:
         schedule_market_backfill_job(job.id, job.paused_until)
     return MarketGraphBackfillOut(**serialize_market_backfill_job(job))

@@ -246,6 +246,7 @@ def apply_schema_upgrades(session: Session) -> None:
         text("CREATE INDEX IF NOT EXISTS idx_insight_posts_published_at ON insight_posts(published_at)")
     )
     # Phase 5.1: job progress fields for async market graph backfill
+    session.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scope VARCHAR(32) NOT NULL DEFAULT 'all'"))
     session.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS requested_by_user_id INTEGER REFERENCES users(id)"))
     session.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS total_items INTEGER NOT NULL DEFAULT 0"))
     session.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS processed_items INTEGER NOT NULL DEFAULT 0"))

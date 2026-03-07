@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import false, func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
-from app.models import Job, Item, ItemKeyword, Source
+from app.models import Feedback, FeedbackAction, Job, Item, ItemKeyword, Source
 from app.mongo import get_market_articles_collection
 from app.services.market_entities import MarketEntityRateLimitedError
 from app.services.market_graph import get_existing_market_article_ids, sync_market_article
@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 MARKET_GRAPH_BACKFILL_JOB_TYPE = "market_graph_backfill"
 ACTIVE_MARKET_GRAPH_BACKFILL_STATUSES = {"queued", "running", "paused"}
+MARKET_GRAPH_BACKFILL_SCOPE_ALL = "all"
+MARKET_GRAPH_BACKFILL_SCOPE_BOOKMARKS = "bookmarks"
+MARKET_GRAPH_BACKFILL_SCOPES = {
+    MARKET_GRAPH_BACKFILL_SCOPE_ALL,
+    MARKET_GRAPH_BACKFILL_SCOPE_BOOKMARKS,
+}
 
 
 def _utcnow() -> datetime:
@@ -27,6 +33,7 @@ def _serialize_job(job: Job) -> dict:
     return {
         "job_id": job.id,
         "job_type": job.job_type,
+        "scope": job.scope,
         "status": job.status,
         "processed": job.processed_items,
         "synced": job.synced_items,
@@ -77,16 +84,38 @@ def create_or_reuse_market_backfill_job(
     db: Session,
     *,
     requested_by_user_id: int | None,
+    scope: str = MARKET_GRAPH_BACKFILL_SCOPE_BOOKMARKS,
     limit: int | None = None,
 ) -> tuple[Job, bool]:
-    active_job = get_active_market_backfill_job(db)
-    if active_job is not None:
-        return active_job, False
+    if scope not in MARKET_GRAPH_BACKFILL_SCOPES:
+        raise ValueError(f"unsupported_market_backfill_scope:{scope}")
 
-    total_items = _count_target_items(db, after_item_id=0, limit=limit)
+    active_job = get_active_market_backfill_job(db)
     now = _utcnow()
+    if active_job is not None:
+        if (
+            active_job.scope == scope
+            and active_job.requested_by_user_id == requested_by_user_id
+            and active_job.limit_value == limit
+        ):
+            return active_job, False
+
+        active_job.status = "cancelled"
+        active_job.ended_at = now
+        active_job.paused_until = None
+        active_job.error_message = f"superseded_by_scope={scope}"
+        db.commit()
+
+    total_items = _count_target_items(
+        db,
+        after_item_id=0,
+        requested_by_user_id=requested_by_user_id,
+        scope=scope,
+        limit=limit,
+    )
     job = Job(
         job_type=MARKET_GRAPH_BACKFILL_JOB_TYPE,
+        scope=scope,
         requested_by_user_id=requested_by_user_id,
         started_at=now,
         ended_at=now if total_items == 0 else None,
@@ -106,11 +135,55 @@ def create_or_reuse_market_backfill_job(
     return job, True
 
 
-def _count_target_items(db: Session, *, after_item_id: int, limit: int | None) -> int:
+def _saved_item_ids_subquery(user_id: int):
+    latest_feedback = (
+        select(Feedback.item_id, func.max(Feedback.id).label("max_id"))
+        .where(
+            Feedback.user_id == user_id,
+            Feedback.action.in_([FeedbackAction.SAVED.value, FeedbackAction.SKIPPED.value]),
+        )
+        .group_by(Feedback.item_id)
+        .subquery()
+    )
+    return (
+        select(Feedback.item_id)
+        .join(latest_feedback, Feedback.id == latest_feedback.c.max_id)
+        .where(
+            Feedback.user_id == user_id,
+            Feedback.action == FeedbackAction.SAVED.value,
+        )
+    )
+
+
+def _scoped_item_select(
+    *,
+    after_item_id: int,
+    requested_by_user_id: int | None,
+    scope: str,
+):
+    stmt = select(Item).where(Item.id > after_item_id)
+    if scope == MARKET_GRAPH_BACKFILL_SCOPE_BOOKMARKS:
+        if requested_by_user_id is None:
+            return stmt.where(false())
+        stmt = stmt.where(Item.id.in_(_saved_item_ids_subquery(requested_by_user_id)))
+    return stmt
+
+
+def _count_target_items(
+    db: Session,
+    *,
+    after_item_id: int,
+    requested_by_user_id: int | None,
+    scope: str,
+    limit: int | None,
+) -> int:
     total = db.execute(
         select(func.count())
-        .select_from(Item)
-        .where(Item.id > after_item_id)
+        .select_from(_scoped_item_select(
+            after_item_id=after_item_id,
+            requested_by_user_id=requested_by_user_id,
+            scope=scope,
+        ).subquery())
     ).scalar_one()
     if limit is not None and limit > 0:
         return min(int(total), limit)
@@ -121,11 +194,16 @@ def _fetch_batch_items(
     db: Session,
     *,
     after_item_id: int,
+    requested_by_user_id: int | None,
+    scope: str,
     batch_size: int,
 ) -> list[Item]:
     return db.execute(
-        select(Item)
-        .where(Item.id > after_item_id)
+        _scoped_item_select(
+            after_item_id=after_item_id,
+            requested_by_user_id=requested_by_user_id,
+            scope=scope,
+        )
         .order_by(Item.id)
         .limit(batch_size)
     ).scalars().all()
@@ -200,6 +278,8 @@ def process_market_backfill_job(job_id: int) -> dict:
             items = _fetch_batch_items(
                 db,
                 after_item_id=job.last_item_id or 0,
+                requested_by_user_id=job.requested_by_user_id,
+                scope=job.scope,
                 batch_size=batch_size,
             )
             if not items:

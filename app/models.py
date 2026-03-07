@@ -140,6 +140,7 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    scope: Mapped[str] = mapped_column(String(32), default="all", nullable=False)
     requested_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
