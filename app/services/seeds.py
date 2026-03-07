@@ -132,7 +132,7 @@ def apply_schema_upgrades(session: Session) -> None:
                 IF EXISTS (
                     SELECT 1 FROM pg_type WHERE typname = 'sourcetype'
                 ) THEN
-                    ALTER TYPE sourcetype ADD VALUE IF NOT EXISTS 'alpaca_news';
+                    ALTER TYPE sourcetype ADD VALUE IF NOT EXISTS 'ALPACA_NEWS';
                 END IF;
             END $$;
             """
