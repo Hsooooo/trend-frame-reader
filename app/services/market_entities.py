@@ -77,6 +77,32 @@ class MarketEntityRateLimitedError(Exception):
         super().__init__(f"market_entity_rate_limited:{self.retry_after_seconds:.2f}")
 
 
+_CONFIDENCE_LABELS = {
+    "very_low": 0.2,
+    "low": 0.35,
+    "medium": 0.6,
+    "med": 0.6,
+    "moderate": 0.6,
+    "high": 0.82,
+    "very_high": 0.95,
+}
+
+
+def _coerce_confidence(value: object, default: float = 0.6) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if not cleaned:
+            return default
+        try:
+            return float(cleaned)
+        except ValueError:
+            normalized = re.sub(r"[\s-]+", "_", cleaned)
+            return _CONFIDENCE_LABELS.get(normalized, default)
+    return default
+
+
 def _unique_by(rows: list[dict], key: str) -> list[dict]:
     merged: dict[str, dict] = {}
     for row in rows:
@@ -309,7 +335,7 @@ def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
                 {
                     "canonical_name": name,
                     "raw_name": str(row.get("raw_name", name)).strip() or name,
-                    "confidence": float(row.get("confidence", 0.6)),
+                    "confidence": _coerce_confidence(row.get("confidence", 0.6)),
                 }
             )
         elif kind == "tickers":
@@ -321,7 +347,7 @@ def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
                     "symbol": symbol,
                     "exchange": str(row.get("exchange", "")).upper().strip() or None,
                     "company_name": str(row.get("company_name", "")).strip() or symbol,
-                    "confidence": float(row.get("confidence", 0.6)),
+                    "confidence": _coerce_confidence(row.get("confidence", 0.6)),
                     "source": str(row.get("source", "llm")).strip() or "llm",
                 }
             )
@@ -334,14 +360,14 @@ def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
                     "type": event_type,
                     "label": str(row.get("label", event_type)).strip() or event_type,
                     "sentiment": str(row.get("sentiment", "neutral")).strip() or "neutral",
-                    "confidence": float(row.get("confidence", 0.6)),
+                    "confidence": _coerce_confidence(row.get("confidence", 0.6)),
                 }
             )
         elif kind == "themes":
             name = str(row.get("name", "")).strip()
             if not name:
                 continue
-            normalized.append({"name": name, "confidence": float(row.get("confidence", 0.6))})
+            normalized.append({"name": name, "confidence": _coerce_confidence(row.get("confidence", 0.6))})
     key_map = {
         "companies": "canonical_name",
         "tickers": "symbol",

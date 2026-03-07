@@ -70,3 +70,27 @@ def test_extract_market_entities_skips_llm_temporarily_after_rate_limit(monkeypa
         "_LLM_RATE_LIMITED_UNTIL",
         datetime.now(UTC) - timedelta(seconds=1),
     )
+
+
+def test_extract_market_entities_accepts_string_confidence_labels(monkeypatch):
+    monkeypatch.setattr(
+        market_entities,
+        "_extract_llm_entities",
+        lambda *args, **kwargs: {
+            "companies": [{"canonical_name": "Apple", "raw_name": "Apple", "confidence": "high"}],
+            "tickers": [{"symbol": "AAPL", "exchange": "NASDAQ", "company_name": "Apple", "confidence": "0.91"}],
+            "events": [{"type": "earnings", "label": "earnings update", "sentiment": "neutral", "confidence": "medium"}],
+            "themes": [{"name": "ai", "confidence": "low"}],
+        },
+    )
+
+    result = extract_market_entities(
+        title="Apple discusses AI roadmap after earnings",
+        summary="Management detailed the product roadmap and market outlook.",
+    )
+
+    apple_company = next(company for company in result["companies"] if company["canonical_name"] == "Apple")
+    ai_theme = next(theme for theme in result["themes"] if theme["name"] == "ai")
+    assert apple_company["confidence"] >= 0.8
+    assert ai_theme["confidence"] > 0.0
+    assert result["entity_extraction_status"] == "heuristic+llm"
