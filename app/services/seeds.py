@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import Source, SourceType
 
 DEFAULT_SOURCES: list[dict] = [
@@ -26,6 +27,7 @@ DEFAULT_SOURCES: list[dict] = [
         "url": "https://www.nasdaq.com/feed/rssoutbound?category=Markets",
         "category": "us-markets",
         "weight": 1.1,
+        "enabled": False,
     },
     {
         "type": SourceType.RSS,
@@ -33,6 +35,7 @@ DEFAULT_SOURCES: list[dict] = [
         "url": "https://www.nasdaq.com/feed/rssoutbound?category=Stocks",
         "category": "us-markets",
         "weight": 1.1,
+        "enabled": False,
     },
     {
         "type": SourceType.RSS,
@@ -40,6 +43,42 @@ DEFAULT_SOURCES: list[dict] = [
         "url": "https://www.nasdaq.com/feed/rssoutbound?category=Earnings",
         "category": "us-markets",
         "weight": 1.05,
+        "enabled": False,
+    },
+    {
+        "type": SourceType.ALPACA_NEWS,
+        "name": "Alpaca News",
+        "url": settings.alpaca_news_api_url,
+        "category": "us-stock-news",
+        "weight": 1.15,
+        "enabled": bool(settings.alpaca_api_key_id and settings.alpaca_api_secret_key),
+    },
+    {
+        "type": SourceType.RSS,
+        "name": "SEC Press Releases",
+        "url": "https://www.sec.gov/news/pressreleases.rss",
+        "category": "us-stock-news",
+        "weight": 1.05,
+    },
+    {
+        "type": SourceType.RSS,
+        "name": "EDGAR 8-K Filings",
+        "url": (
+            "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"
+            "&company=&count=40&dateb=&output=atom&owner=include&type=8-k"
+        ),
+        "category": "us-stock-filings",
+        "weight": 1.05,
+    },
+    {
+        "type": SourceType.RSS,
+        "name": "EDGAR 10-K Filings",
+        "url": (
+            "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"
+            "&company=&count=40&dateb=&output=atom&owner=include&type=10-k"
+        ),
+        "category": "us-stock-filings",
+        "weight": 1.0,
     },
     {"type": SourceType.RSS, "name": "DW All (EN)", "url": "https://rss.dw.com/rdf/rss-en-all", "category": "world-politics", "weight": 1.0},
     {"type": SourceType.RSS, "name": "DW World", "url": "https://rss.dw.com/rdf/rss-en-world", "category": "world-politics", "weight": 1.0},
@@ -85,6 +124,20 @@ DEFAULT_SOURCES: list[dict] = [
 
 def apply_schema_upgrades(session: Session) -> None:
     # Lightweight migration path without Alembic.
+    session.execute(
+        text(
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM pg_type WHERE typname = 'sourcetype'
+                ) THEN
+                    ALTER TYPE sourcetype ADD VALUE IF NOT EXISTS 'alpaca_news';
+                END IF;
+            END $$;
+            """
+        )
+    )
     session.execute(
         text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS category VARCHAR(64) NOT NULL DEFAULT 'general'")
     )

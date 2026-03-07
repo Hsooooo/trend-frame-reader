@@ -22,6 +22,7 @@ class User(Base):
 class SourceType(str, Enum):
     RSS = "rss"
     HN = "hn"
+    ALPACA_NEWS = "alpaca_news"
 
 
 class FeedbackAction(str, Enum):

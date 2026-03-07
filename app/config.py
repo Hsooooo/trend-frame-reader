@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     rss_fetch_user_agent: str = (
         "Mozilla/5.0 (compatible; TrendFrameReader/1.0; +https://running-pacer.p-e.kr)"
     )
+    alpaca_api_key_id: str = ""
+    alpaca_api_secret_key: str = ""
+    alpaca_news_api_url: str = "https://data.alpaca.markets/v1beta1/news"
+    alpaca_news_limit_per_source: int = 25
+    stock_feed_limit: int = 40
     deepl_api_key: str = ""
     deepl_api_url: str = "https://api-free.deepl.com/v2/translate"
     deepl_timeout_seconds: float = 6.0

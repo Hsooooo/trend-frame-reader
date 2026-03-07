@@ -10,7 +10,8 @@ from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Feedback, Feed, FeedItem, Item, Job, SlotType
+from app.models import Feedback, Feed, FeedItem, Item, Job, SlotType, Source
+from app.services.feed_catalog import STOCK_FEED_CATEGORIES
 from app.services.events import CURATION_ACTIONS
 from app.services.utils import utcnow
 
@@ -82,7 +83,12 @@ def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = No
         cutoff = now - timedelta(hours=settings.ingestion_lookback_hours)
         items = db.execute(
             select(Item)
-            .where(Item.fetched_at >= cutoff, Item.id.not_in(excluded_items))
+            .join(Source, Source.id == Item.source_id)
+            .where(
+                Item.fetched_at >= cutoff,
+                Source.category.not_in(tuple(STOCK_FEED_CATEGORIES)),
+                Item.id.not_in(excluded_items),
+            )
             .order_by(desc(Item.score), desc(Item.id))
             .limit(max(300, settings.feed_max_items_total * 20))
         ).scalars().all()
@@ -136,7 +142,13 @@ def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = No
                 cat_counts[category] += 1
 
         if len(picked) < settings.feed_min_items:
-            fallback = db.execute(select(Item).order_by(desc(Item.score), desc(Item.id)).limit(settings.feed_min_items)).scalars().all()
+            fallback = db.execute(
+                select(Item)
+                .join(Source, Source.id == Item.source_id)
+                .where(Source.category.not_in(tuple(STOCK_FEED_CATEGORIES)))
+                .order_by(desc(Item.score), desc(Item.id))
+                .limit(settings.feed_min_items)
+            ).scalars().all()
             seen = {x.id for x in picked}
             for item in fallback:
                 if item.id in seen:

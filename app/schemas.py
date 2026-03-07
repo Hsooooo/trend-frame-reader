@@ -13,6 +13,7 @@ class FeedItemOut(BaseModel):
     item_id: int
     title: str
     translated_title_ko: str | None = None
+    published_at: str | None = None
     source: str
     category: str
     url: str
@@ -37,6 +38,12 @@ class FeedOut(BaseModel):
     feed_date: str
     slot: Slot
     generated_at: datetime
+    items: list[FeedItemOut]
+    groups: list[FeedCategoryGroup] = []
+
+
+class StockFeedOut(BaseModel):
+    generated_at: datetime | None = None
     items: list[FeedItemOut]
     groups: list[FeedCategoryGroup] = []
 

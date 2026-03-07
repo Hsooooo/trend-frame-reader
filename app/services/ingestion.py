@@ -29,6 +29,16 @@ def _parse_hn_ts(ts: str | None):
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
+def _parse_iso_ts(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
 def _parse_feed_entry_ts(entry) -> datetime | None:
     """Parse entry timestamp from feedparser entry with sensible fallbacks."""
     for key in ("published_parsed", "updated_parsed"):
@@ -106,6 +116,59 @@ def _fetch_rss_items(url: str, limit: int = 50) -> list[dict]:
             "published_at": _parse_feed_entry_ts(e),
             "summary": summary,
         })
+    return out
+
+
+def _fetch_alpaca_news_items(url: str, limit: int = 50) -> list[dict]:
+    if not settings.alpaca_api_key_id or not settings.alpaca_api_secret_key:
+        logger.info("alpaca_news_skipped_missing_credentials")
+        return []
+
+    response = httpx.get(
+        url,
+        timeout=settings.rss_fetch_timeout_seconds,
+        headers={
+            "APCA-API-KEY-ID": settings.alpaca_api_key_id,
+            "APCA-API-SECRET-KEY": settings.alpaca_api_secret_key,
+            "Accept": "application/json",
+            "User-Agent": settings.rss_fetch_user_agent,
+        },
+        params={
+            "limit": min(limit, settings.alpaca_news_limit_per_source),
+            "sort": "desc",
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    articles = payload.get("news", []) if isinstance(payload, dict) else []
+
+    out = []
+    for article in articles[:limit]:
+        title = article.get("headline")
+        link = article.get("url")
+        if not title or not link:
+            continue
+
+        summary_parts: list[str] = []
+        summary = (article.get("summary") or "").strip()
+        if summary:
+            summary_parts.append(summary)
+        symbols = [symbol.strip().upper() for symbol in article.get("symbols", []) if isinstance(symbol, str) and symbol.strip()]
+        if symbols:
+            summary_parts.append(f"Related symbols: {', '.join(symbols[:10])}")
+        author = (article.get("author") or "").strip()
+        publisher = (article.get("source") or "").strip()
+        attribution = " · ".join(part for part in (publisher, author) if part)
+        if attribution:
+            summary_parts.append(attribution)
+
+        out.append({
+            "title": title,
+            "url": link,
+            "published_at": _parse_iso_ts(article.get("created_at")) or _parse_iso_ts(article.get("updated_at")),
+            "summary": " ".join(summary_parts).strip() or None,
+        })
+
     return out
 
 
@@ -245,6 +308,8 @@ def run_ingestion(db: Session) -> dict:
             try:
                 if source.type == SourceType.HN:
                     items = _fetch_hn_items()
+                elif source.type == SourceType.ALPACA_NEWS:
+                    items = _fetch_alpaca_news_items(source.url, limit=settings.alpaca_news_limit_per_source)
                 else:
                     items = _fetch_rss_items(source.url)
             except Exception:
