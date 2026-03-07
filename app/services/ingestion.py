@@ -77,7 +77,17 @@ def _strip_html(text: str) -> str:
 
 
 def _fetch_rss_items(url: str, limit: int = 50) -> list[dict]:
-    feed = feedparser.parse(url)
+    response = httpx.get(
+        url,
+        timeout=settings.rss_fetch_timeout_seconds,
+        follow_redirects=True,
+        headers={
+            "User-Agent": settings.rss_fetch_user_agent,
+            "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        },
+    )
+    response.raise_for_status()
+    feed = feedparser.parse(response.content)
     out = []
     for e in feed.entries[:limit]:
         link = e.get("link")
