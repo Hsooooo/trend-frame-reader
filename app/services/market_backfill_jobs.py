@@ -315,8 +315,9 @@ def process_market_backfill_job(job_id: int) -> dict:
                     db.commit()
                 except MarketEntityRateLimitedError as exc:
                     retry_after = max(exc.retry_after_seconds, 5.0)
+                    pause_from = _utcnow()
                     job.status = "paused"
-                    job.paused_until = now + timedelta(seconds=retry_after)
+                    job.paused_until = pause_from + timedelta(seconds=retry_after)
                     job.error_message = f"rate_limited_retry_after={retry_after:.2f}s"
                     db.commit()
                     return _serialize_job(job)

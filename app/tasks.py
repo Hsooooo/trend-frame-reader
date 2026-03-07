@@ -48,7 +48,10 @@ def _market_backfill_job(job_id: int):
 
 
 def schedule_market_backfill_job(job_id: int, run_at: datetime | None = None):
-    run_date = run_at or datetime.now(UTC)
+    now = datetime.now(UTC)
+    run_date = run_at or now
+    if run_date < now:
+        run_date = now
     scheduler.add_job(
         _market_backfill_job,
         "date",
@@ -56,6 +59,7 @@ def schedule_market_backfill_job(job_id: int, run_at: datetime | None = None):
         id=f"market_backfill_{job_id}",
         replace_existing=True,
         args=[job_id],
+        misfire_grace_time=300,
     )
 
 
