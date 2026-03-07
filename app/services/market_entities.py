@@ -215,12 +215,52 @@ def _extract_llm_entities(
     if client is None:
         return None
 
+    primary_model = settings.openai_market_entity_model.strip()
+    fallback_model = settings.openai_market_entity_fallback_model.strip()
+
     if _LLM_RATE_LIMITED_UNTIL is not None and datetime.now(UTC) < _LLM_RATE_LIMITED_UNTIL:
+        if fallback_model and fallback_model != primary_model:
+            try:
+                return _call_llm_entity_model(client, fallback_model, title, summary)
+            except Exception:
+                logger.warning("Fallback market entity extraction failed", exc_info=True)
+                return None
         retry_after = (_LLM_RATE_LIMITED_UNTIL - datetime.now(UTC)).total_seconds()
         if raise_on_rate_limit:
             raise MarketEntityRateLimitedError(retry_after)
         return None
 
+    try:
+        return _call_llm_entity_model(client, primary_model, title, summary)
+    except RateLimitError as exc:
+        retry_after = _parse_retry_after_seconds(str(exc)) or 60.0
+        _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
+        if fallback_model and fallback_model != primary_model:
+            logger.warning(
+                "Primary market entity model rate-limited; retrying with fallback model %s",
+                fallback_model,
+            )
+            try:
+                return _call_llm_entity_model(client, fallback_model, title, summary)
+            except RateLimitError as fallback_exc:
+                retry_after = _parse_retry_after_seconds(str(fallback_exc)) or retry_after
+                _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
+            except Exception:
+                logger.warning("Fallback market entity extraction failed", exc_info=True)
+                return None
+        logger.warning(
+            "LLM market entity extraction rate-limited; using heuristic only for %.2fs",
+            retry_after,
+        )
+        if raise_on_rate_limit:
+            raise MarketEntityRateLimitedError(retry_after) from exc
+        return None
+    except Exception:
+        logger.warning("LLM market entity extraction failed", exc_info=True)
+        return None
+
+
+def _call_llm_entity_model(client, model: str, title: str, summary: str | None) -> dict | None:
     summary_part = f"\nSummary: {summary.strip()}" if summary and summary.strip() else ""
     prompt = (
         "Extract market entities from the article below.\n"
@@ -232,41 +272,26 @@ def _extract_llm_entities(
         "Focus on publicly traded U.S. companies and only include items directly supported by the text.\n"
         f"\nTitle: {title.strip()}{summary_part}"
     )
-
-    try:
-        response = client.chat.completions.create(
-            model=settings.openai_market_entity_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You extract market entities from financial news.\n"
-                        "Return JSON only. Never include markdown."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0,
-            timeout=settings.openai_timeout_seconds,
-        )
-        raw = _strip_code_fences(response.choices[0].message.content or "")
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            return None
-        return payload
-    except RateLimitError as exc:
-        retry_after = _parse_retry_after_seconds(str(exc)) or 60.0
-        _LLM_RATE_LIMITED_UNTIL = datetime.now(UTC) + timedelta(seconds=retry_after)
-        logger.warning(
-            "LLM market entity extraction rate-limited; using heuristic only for %.2fs",
-            retry_after,
-        )
-        if raise_on_rate_limit:
-            raise MarketEntityRateLimitedError(retry_after) from exc
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You extract market entities from financial news.\n"
+                    "Return JSON only. Never include markdown."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
+        timeout=settings.openai_timeout_seconds,
+    )
+    raw = _strip_code_fences(response.choices[0].message.content or "")
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
         return None
-    except Exception:
-        logger.warning("LLM market entity extraction failed", exc_info=True)
-        return None
+    return payload
 
 
 def _normalize_llm_rows(rows: object, kind: str) -> list[dict]:
