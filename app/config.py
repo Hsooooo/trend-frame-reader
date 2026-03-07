@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     feed_max_items_total: int = 30
     ingestion_lookback_hours: int = 48
     title_similarity_threshold: float = 0.85
-    rss_fetch_timeout_seconds: float = 12.0
+    rss_fetch_timeout_seconds: float = 20.0
     rss_fetch_user_agent: str = (
         "Mozilla/5.0 (compatible; TrendFrameReader/1.0; +https://running-pacer.p-e.kr)"
     )

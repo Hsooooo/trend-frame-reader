@@ -77,17 +77,21 @@ def _strip_html(text: str) -> str:
 
 
 def _fetch_rss_items(url: str, limit: int = 50) -> list[dict]:
-    response = httpx.get(
-        url,
-        timeout=settings.rss_fetch_timeout_seconds,
-        follow_redirects=True,
-        headers={
-            "User-Agent": settings.rss_fetch_user_agent,
-            "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
-        },
-    )
-    response.raise_for_status()
-    feed = feedparser.parse(response.content)
+    try:
+        response = httpx.get(
+            url,
+            timeout=settings.rss_fetch_timeout_seconds,
+            follow_redirects=True,
+            headers={
+                "User-Agent": settings.rss_fetch_user_agent,
+                "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+            },
+        )
+        response.raise_for_status()
+        feed = feedparser.parse(response.content)
+    except httpx.HTTPError:
+        logger.warning("rss_source_http_fetch_failed: url=%s", url, exc_info=True)
+        feed = feedparser.parse(url)
     out = []
     for e in feed.entries[:limit]:
         link = e.get("link")
@@ -231,15 +235,24 @@ def run_ingestion(db: Session) -> dict:
 
     inserted = 0
     scanned = 0
+    sources_processed = 0
+    source_errors = 0
     seen_canonical: set[str] = set()
 
     try:
         sources = db.execute(select(Source).where(Source.enabled == True)).scalars().all()  # noqa: E712
         for source in sources:
-            if source.type == SourceType.HN:
-                items = _fetch_hn_items()
-            else:
-                items = _fetch_rss_items(source.url)
+            try:
+                if source.type == SourceType.HN:
+                    items = _fetch_hn_items()
+                else:
+                    items = _fetch_rss_items(source.url)
+            except Exception:
+                source_errors += 1
+                logger.warning("ingestion_source_fetch_failed: source_id=%s", source.id, exc_info=True)
+                continue
+
+            sources_processed += 1
 
             for obj in items:
                 scanned += 1
@@ -297,7 +310,12 @@ def run_ingestion(db: Session) -> dict:
         job.status = "success"
         job.ended_at = utcnow()
         db.commit()
-        return {"scanned": scanned, "inserted": inserted}
+        return {
+            "scanned": scanned,
+            "inserted": inserted,
+            "sources_processed": sources_processed,
+            "source_errors": source_errors,
+        }
     except Exception as exc:
         db.rollback()
         job.status = "failed"
