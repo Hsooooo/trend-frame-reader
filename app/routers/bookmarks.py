@@ -19,13 +19,27 @@ from app.schemas import (
     KeywordCloudOut,
     KeywordGraphOut,
     KeywordNeighbor,
+    MarketArticleNode,
+    MarketCompanyNode,
+    MarketEventNode,
+    MarketGraphEdge,
+    MarketThemeNode,
+    MarketTickerGraphOut,
+    MarketTickerNode,
     SimilarityGraphOut,
     TimelineArticle,
     TimelineOut,
 )
 from app.security import get_current_user
 from app.services.events import CURATION_ACTIONS
-from app.services.graph import get_bookmark_keyword_cloud, get_full_graph, get_keyword_graph, get_similarity_graph, get_timeline_articles
+from app.services.graph import (
+    get_bookmark_keyword_cloud,
+    get_full_graph,
+    get_keyword_graph,
+    get_similarity_graph,
+    get_timeline_articles,
+)
+from app.services.market_graph import get_ticker_market_graph
 from app.services.rag import ask_bookmarks
 
 router = APIRouter(prefix="/bookmarks", tags=["bookmarks"])
@@ -80,7 +94,7 @@ def get_bookmarks(
                 "saved_at": saved_at,
             }
             for item, source, saved_at in rows
-        ]
+        ],
     }
 
 
@@ -164,4 +178,34 @@ def bookmark_timeline(
     articles = get_timeline_articles(days, user_id=user.id)
     return TimelineOut(
         articles=[TimelineArticle(**a) for a in articles],
+    )
+
+
+@router.get("/market/graph", response_model=MarketTickerGraphOut)
+def bookmark_market_graph(
+    ticker: str = Query(..., min_length=1, max_length=10),
+    days: int = Query(default=30, ge=1, le=365),
+    max_articles: int = Query(default=20, ge=1, le=50),
+    bookmarks_only: bool = Query(default=True),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    result = get_ticker_market_graph(
+        db,
+        ticker=ticker,
+        days=days,
+        max_articles=max_articles,
+        bookmarks_only=bookmarks_only,
+        user_id=user.id,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="ticker_not_found")
+    return MarketTickerGraphOut(
+        focus_ticker=result["focus_ticker"],
+        ticker_nodes=[MarketTickerNode(**node) for node in result.get("ticker_nodes", [])],
+        company_nodes=[MarketCompanyNode(**node) for node in result.get("company_nodes", [])],
+        event_nodes=[MarketEventNode(**node) for node in result.get("event_nodes", [])],
+        theme_nodes=[MarketThemeNode(**node) for node in result.get("theme_nodes", [])],
+        article_nodes=[MarketArticleNode(**node) for node in result.get("article_nodes", [])],
+        edges=[MarketGraphEdge(**edge) for edge in result.get("edges", [])],
     )

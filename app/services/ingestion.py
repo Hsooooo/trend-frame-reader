@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Item, ItemKeyword, Job, Source, SourceType
+from app.services.market_graph import sync_market_article
 from app.services.keywords import extract_keywords, build_keyword_text
 from app.services.ranking import compute_score
 from app.services.translation import translate_title_to_korean
@@ -264,12 +265,19 @@ def run_ingestion(db: Session) -> dict:
                 db.flush()
 
                 kw_text = build_keyword_text(obj["title"], obj.get("summary"))
-                for kw in extract_keywords(kw_text, title=obj["title"], summary=obj.get("summary")):
+                extracted_keywords = extract_keywords(kw_text, title=obj["title"], summary=obj.get("summary"))
+                for kw in extracted_keywords:
                     db.add(ItemKeyword(
                         item_id=item.id,
                         keyword=kw["keyword"],
                         relevance_score=kw["score"],
                     ))
+                db.flush()
+
+                try:
+                    sync_market_article(item, source, [kw["keyword"] for kw in extracted_keywords])
+                except Exception:
+                    logger.warning("market graph sync failed for item_id=%s", item.id, exc_info=True)
 
                 seen_canonical.add(canonical)
                 inserted += 1

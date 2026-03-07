@@ -18,6 +18,7 @@ from app.schemas import (
     InsightPostAdminOut,
     KeywordSentimentItem,
     KeywordSentimentsOut,
+    MarketGraphBackfillOut,
     MetricsOut,
     RssPublishedAtBackfillIn,
     RssPublishedAtBackfillOut,
@@ -28,6 +29,7 @@ from app.services.graph import backfill_graph
 from app.services.insights import generate_draft, publish_post, unpublish_post
 from app.services.ingestion import backfill_rss_published_at
 from app.services.keyword_embeddings import backfill_keyword_embeddings
+from app.services.market_graph import backfill_market_graph
 from app.mongo import get_keywords_collection
 from app.security import get_current_user, require_owner
 from app.services.keywords import build_keyword_text, extract_keywords
@@ -304,6 +306,16 @@ def admin_backfill_graph(
     """Backfill MongoDB knowledge graph from existing bookmarks."""
     result = backfill_graph(db)
     return GraphBackfillOut(**result)
+
+
+@router.post("/market/backfill", response_model=MarketGraphBackfillOut)
+def admin_backfill_market_graph(
+    limit: int = Query(default=0, ge=0, le=5000),
+    _: User = Depends(require_owner),
+    db: Session = Depends(get_db),
+):
+    result = backfill_market_graph(db, limit=limit or None)
+    return MarketGraphBackfillOut(**result)
 
 
 @router.post("/backfill-rss-published-at", response_model=RssPublishedAtBackfillOut)

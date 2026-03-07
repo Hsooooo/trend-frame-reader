@@ -1,6 +1,7 @@
 # trend-frame-reader
 
 Phase 2.5 backend for Trend x Frame Reader. Includes bookmark Knowledge Graph and Mini-RAG Q&A.
+Also includes an initial Market Intelligence Graph slice for ticker-aware article exploration.
 
 ## Stack
 - FastAPI
@@ -31,6 +32,7 @@ uvicorn app.main:app --reload
 - `GET /admin/keyword-sentiments?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&min_feedback=2&limit=50` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `POST /admin/backfill-keywords` (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `POST /admin/backfill-graph` — 기존 북마크를 MongoDB 그래프/벡터로 전체 백필 (requires `Authorization: Bearer <ADMIN_TOKEN>`)
+- `POST /admin/market/backfill?limit=0` — 전체 기사 코퍼스를 `market_articles` projection으로 백필 (requires `Authorization: Bearer <ADMIN_TOKEN>`)
 - `GET /feeds/today?slot=am|pm`
 - `POST /feedback` with `{ "item_id": 1, "action": "saved|skipped|liked|disliked" }`
 - `POST /events/click` with `{ "item_id": 1 }`
@@ -38,6 +40,7 @@ uvicorn app.main:app --reload
 - `POST /bookmarks/ask` with `{ "query": "...", "top_k": 5 }` — 북마크 기반 Mini-RAG Q&A
 - `GET /bookmarks/explore?keyword=AI&depth=1` — 키워드 그래프 탐색
 - `GET /bookmarks/keywords?limit=30` — 북마크 키워드 클라우드
+- `GET /bookmarks/market/graph?ticker=AAPL&days=30&bookmarks_only=true` — 티커 기준 시장 엔티티 그래프 조회
 
 `GET /feeds/today` item fields include:
 - `title` (original)
@@ -54,6 +57,7 @@ uvicorn app.main:app --reload
 - `DEEPL_RETRIES`: default `1`
 - `OPENAI_API_KEY`: OpenAI API key (keyword extraction, embeddings, RAG)
 - `OPENAI_KEYWORD_MODEL`: default `gpt-4o-mini`
+- `OPENAI_MARKET_ENTITY_MODEL`: default `gpt-4o-mini`
 - `OPENAI_EMBEDDING_MODEL`: default `text-embedding-3-small`
 - `MONGODB_URI`: MongoDB Atlas connection string. If empty, graph/RAG features are disabled.
 - `MONGODB_DATABASE`: default `trend_frame_graph`

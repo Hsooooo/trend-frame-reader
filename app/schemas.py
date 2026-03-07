@@ -155,6 +155,13 @@ class GraphBackfillOut(BaseModel):
     status: str
 
 
+class MarketGraphBackfillOut(BaseModel):
+    processed: int
+    synced: int
+    failed: int
+    status: str
+
+
 class FullGraphKeywordNode(BaseModel):
     id: str                    # "kw_{keyword}"
     keyword: str
@@ -193,6 +200,63 @@ class TimelineArticle(BaseModel):
 
 class TimelineOut(BaseModel):
     articles: list[TimelineArticle]
+
+
+class MarketTickerNode(BaseModel):
+    id: str
+    symbol: str
+    exchange: str | None = None
+    mention_count: int = 0
+    is_focus: bool = False
+
+
+class MarketCompanyNode(BaseModel):
+    id: str
+    canonical_name: str
+    mention_count: int = 0
+
+
+class MarketEventNode(BaseModel):
+    id: str
+    event_type: str
+    label: str
+    count: int = 0
+
+
+class MarketThemeNode(BaseModel):
+    id: str
+    name: str
+    count: int = 0
+
+
+class MarketArticleNode(BaseModel):
+    id: str
+    item_id: int
+    title: str
+    url: str
+    source: str | None = None
+    published_at: str | None = None
+    companies: list[str] = []
+    tickers: list[str] = []
+    events: list[str] = []
+    themes: list[str] = []
+
+
+class MarketGraphEdge(BaseModel):
+    source: str
+    target: str
+    type: str
+    weight: int = 1
+
+
+class MarketTickerGraphOut(BaseModel):
+    focus_ticker: str
+    ticker_nodes: list[MarketTickerNode]
+    company_nodes: list[MarketCompanyNode]
+    event_nodes: list[MarketEventNode]
+    theme_nodes: list[MarketThemeNode]
+    article_nodes: list[MarketArticleNode]
+    edges: list[MarketGraphEdge]
 
 
 class InsightPostOut(BaseModel):

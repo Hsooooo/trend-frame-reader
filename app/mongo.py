@@ -43,6 +43,11 @@ def get_graph_sync_log_collection() -> Collection | None:
     return db["graph_sync_log"] if db is not None else None
 
 
+def get_market_articles_collection() -> Collection | None:
+    db = get_mongo_db()
+    return db["market_articles"] if db is not None else None
+
+
 def close_mongo_client() -> None:
     global _client
     if _client is not None:
@@ -61,3 +66,10 @@ def ensure_indexes() -> None:
 
     db["keywords"].create_index([("keyword", ASCENDING)], unique=True)
     logger.info("MongoDB index ensured: keywords.keyword (unique)")
+
+    db["market_articles"].create_index([("item_id", ASCENDING)], unique=True)
+    db["market_articles"].create_index([("tickers.symbol", ASCENDING)])
+    db["market_articles"].create_index([("companies.canonical_name", ASCENDING)])
+    db["market_articles"].create_index([("events.type", ASCENDING)])
+    db["market_articles"].create_index([("themes.name", ASCENDING)])
+    logger.info("MongoDB indexes ensured: market_articles item/entity indexes")

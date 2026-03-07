@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     deepl_retries: int = 1
     openai_api_key: str = ""
     openai_keyword_model: str = "gpt-4o-mini"
+    openai_market_entity_model: str = "gpt-4o-mini"
     openai_timeout_seconds: float = 10.0
     cors_allowed_origins: str = ""
     admin_token: str = ""
