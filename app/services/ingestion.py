@@ -23,6 +23,84 @@ from app.services.utils import canonicalize_url, detect_language, title_key, utc
 logger = logging.getLogger(__name__)
 
 
+def _sort_feed_candidates(candidates: list[tuple[Source, dict]]) -> list[tuple[Source, dict]]:
+    def sort_key(row: tuple[Source, dict]) -> tuple[datetime, str]:
+        _, payload = row
+        published_at = payload.get("published_at")
+        if not isinstance(published_at, datetime):
+            published_at = datetime.min.replace(tzinfo=UTC)
+        return published_at, payload.get("title") or ""
+
+    return sorted(candidates, key=sort_key, reverse=True)
+
+
+def _fetch_source_items(source: Source, *, limit: int | None = None) -> list[dict]:
+    if source.type == SourceType.HN:
+        return _fetch_hn_items(limit=limit or 80)
+    if source.type == SourceType.ALPACA_NEWS:
+        fetch_limit = limit or settings.alpaca_news_limit_per_source
+        return _fetch_alpaca_news_items(source.url, limit=fetch_limit)
+    return _fetch_rss_items(source.url, limit=limit or 50)
+
+
+def _insert_ingested_item(
+    db: Session,
+    *,
+    source: Source,
+    obj: dict,
+    seen_canonical: set[str],
+) -> bool:
+    canonical = canonicalize_url(obj["url"])
+    if canonical in seen_canonical:
+        return False
+
+    exists = db.execute(select(Item.id).where(Item.canonical_url == canonical)).scalar_one_or_none()
+    if exists:
+        return False
+
+    if _is_similar_title(db, obj["title"]):
+        return False
+
+    language = detect_language(obj["title"])
+    translated_title_ko = None
+    if language != "ko" and not is_stock_feed_category(source.category):
+        translated_title_ko = translate_title_to_korean(obj["title"])
+
+    item = Item(
+        source_id=source.id,
+        canonical_url=canonical,
+        url=obj["url"],
+        title=obj["title"],
+        translated_title_ko=translated_title_ko,
+        summary=obj.get("summary"),
+        published_at=obj.get("published_at"),
+        fetched_at=utcnow(),
+        language=language,
+        dedupe_key=title_key(obj["title"]),
+        score=compute_score(source.weight, obj.get("published_at")),
+    )
+    db.add(item)
+    db.flush()
+
+    kw_text = build_keyword_text(obj["title"], obj.get("summary"))
+    extracted_keywords = extract_keywords(kw_text, title=obj["title"], summary=obj.get("summary"))
+    for kw in extracted_keywords:
+        db.add(ItemKeyword(
+            item_id=item.id,
+            keyword=kw["keyword"],
+            relevance_score=kw["score"],
+        ))
+    db.flush()
+
+    try:
+        sync_market_article(item, source, [kw["keyword"] for kw in extracted_keywords])
+    except Exception:
+        logger.warning("market graph sync failed for item_id=%s", item.id, exc_info=True)
+
+    seen_canonical.add(canonical)
+    return True
+
+
 def _parse_hn_ts(ts: str | None):
     if not ts:
         return None
@@ -291,9 +369,19 @@ def backfill_rss_published_at(
     }
 
 
-def run_ingestion(db: Session) -> dict:
+def run_ingestion(
+    db: Session,
+    *,
+    stock_only: bool = False,
+    limit: int | None = None,
+) -> dict:
+    effective_limit = 20 if stock_only and (limit is None or limit <= 0) else limit
     started = utcnow()
-    job = Job(job_type="ingestion", started_at=started, status="running")
+    job = Job(
+        job_type="ingestion_stock" if stock_only else "ingestion",
+        started_at=started,
+        status="running",
+    )
     db.add(job)
     db.flush()
 
@@ -304,74 +392,53 @@ def run_ingestion(db: Session) -> dict:
     seen_canonical: set[str] = set()
 
     try:
-        sources = db.execute(select(Source).where(Source.enabled == True)).scalars().all()  # noqa: E712
-        for source in sources:
-            try:
-                if source.type == SourceType.HN:
-                    items = _fetch_hn_items()
-                elif source.type == SourceType.ALPACA_NEWS:
-                    items = _fetch_alpaca_news_items(source.url, limit=settings.alpaca_news_limit_per_source)
-                else:
-                    items = _fetch_rss_items(source.url)
-            except Exception:
-                source_errors += 1
-                logger.warning("ingestion_source_fetch_failed: source_id=%s", source.id, exc_info=True)
-                continue
+        stmt = select(Source).where(Source.enabled == True)  # noqa: E712
+        if stock_only:
+            stmt = stmt.where(Source.category.in_(tuple(STOCK_FEED_CATEGORIES)))
+        sources = db.execute(stmt.order_by(Source.id.asc())).scalars().all()
 
-            sources_processed += 1
-
-            for obj in items:
-                scanned += 1
-                canonical = canonicalize_url(obj["url"])
-                if canonical in seen_canonical:
-                    continue
-                exists = db.execute(select(Item.id).where(Item.canonical_url == canonical)).scalar_one_or_none()
-                if exists:
-                    continue
-
-                if _is_similar_title(db, obj["title"]):
-                    continue
-
-                language = detect_language(obj["title"])
-                translated_title_ko = None
-                if language != "ko" and not is_stock_feed_category(source.category):
-                    translated_title_ko = translate_title_to_korean(obj["title"])
-
-                item = Item(
-                    source_id=source.id,
-                    canonical_url=canonical,
-                    url=obj["url"],
-                    title=obj["title"],
-                    translated_title_ko=translated_title_ko,
-                    summary=obj.get("summary"),
-                    published_at=obj.get("published_at"),
-                    fetched_at=utcnow(),
-                    language=language,
-                    dedupe_key=title_key(obj["title"]),
-                    score=compute_score(source.weight, obj.get("published_at")),
-                )
-                db.add(item)
-                db.flush()
-
-                kw_text = build_keyword_text(obj["title"], obj.get("summary"))
-                extracted_keywords = extract_keywords(kw_text, title=obj["title"], summary=obj.get("summary"))
-                for kw in extracted_keywords:
-                    db.add(ItemKeyword(
-                        item_id=item.id,
-                        keyword=kw["keyword"],
-                        relevance_score=kw["score"],
-                    ))
-                db.flush()
-
+        if stock_only:
+            fetch_limit = max(20, (effective_limit or 20) * 2)
+            candidates: list[tuple[Source, dict]] = []
+            processed_sources: list[Source] = []
+            for source in sources:
                 try:
-                    sync_market_article(item, source, [kw["keyword"] for kw in extracted_keywords])
+                    items = _fetch_source_items(source, limit=fetch_limit)
                 except Exception:
-                    logger.warning("market graph sync failed for item_id=%s", item.id, exc_info=True)
+                    source_errors += 1
+                    logger.warning("ingestion_source_fetch_failed: source_id=%s", source.id, exc_info=True)
+                    continue
+                sources_processed += 1
+                processed_sources.append(source)
+                candidates.extend((source, obj) for obj in items)
 
-                seen_canonical.add(canonical)
-                inserted += 1
+            for source, obj in _sort_feed_candidates(candidates):
+                scanned += 1
+                if _insert_ingested_item(db, source=source, obj=obj, seen_canonical=seen_canonical):
+                    inserted += 1
+                    if effective_limit is not None and effective_limit > 0 and inserted >= effective_limit:
+                        break
 
-            source.last_fetched_at = utcnow()
+            fetched_at = utcnow()
+            for source in processed_sources:
+                source.last_fetched_at = fetched_at
+        else:
+            for source in sources:
+                try:
+                    items = _fetch_source_items(source)
+                except Exception:
+                    source_errors += 1
+                    logger.warning("ingestion_source_fetch_failed: source_id=%s", source.id, exc_info=True)
+                    continue
+
+                sources_processed += 1
+
+                for obj in items:
+                    scanned += 1
+                    if _insert_ingested_item(db, source=source, obj=obj, seen_canonical=seen_canonical):
+                        inserted += 1
+
+                source.last_fetched_at = utcnow()
 
         job.status = "success"
         job.ended_at = utcnow()
@@ -381,6 +448,8 @@ def run_ingestion(db: Session) -> dict:
             "inserted": inserted,
             "sources_processed": sources_processed,
             "source_errors": source_errors,
+            "stock_only": stock_only,
+            "limit": effective_limit,
         }
     except Exception as exc:
         db.rollback()

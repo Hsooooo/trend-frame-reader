@@ -1,6 +1,7 @@
 import time
 
 from fastapi import Depends, FastAPI
+from fastapi import Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -71,9 +72,17 @@ def on_shutdown():
 
 
 @app.post("/admin/run-ingestion")
-def admin_run_ingestion(_=Depends(require_owner)):
+def admin_run_ingestion(
+    stock_only: bool = Query(default=False),
+    limit: int = Query(default=0, ge=0, le=100),
+    _=Depends(require_owner),
+):
     with SessionLocal() as db:
-        return run_ingestion(db)
+        return run_ingestion(
+            db,
+            stock_only=stock_only,
+            limit=(20 if stock_only and limit == 0 else limit) or None,
+        )
 
 
 @app.post("/admin/generate-feed/{slot}")
