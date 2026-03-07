@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Item, ItemKeyword, Job, Source, SourceType
-from app.services.feed_catalog import is_stock_feed_category
+from app.services.feed_catalog import STOCK_FEED_CATEGORIES, is_stock_feed_category
 from app.services.market_graph import sync_market_article
 from app.services.keywords import extract_keywords, build_keyword_text
 from app.services.ranking import compute_score
