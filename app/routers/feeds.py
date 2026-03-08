@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
 from app.db import get_db
-from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, SlotType, Source, User
+from app.models import Feedback, FeedbackAction, Feed, FeedItem, Item, ItemKeyword, SlotType, Source, SourceType, User
+from app.mongo import get_market_articles_collection
 from app.schemas import FeedCategoryGroup, FeedItemOut, FeedOut, Slot, StockFeedOut
 from app.security import get_optional_user
 from app.services.events import CURATION_ACTIONS, PREFERENCE_ACTIONS, create_feed_impression_events, create_impression_events
@@ -59,6 +60,32 @@ def _published_at_str(item: Item) -> str | None:
     return item.published_at.isoformat() if item.published_at else None
 
 
+def _market_ticker_map(item_ids: list[int]) -> dict[int, list[str]]:
+    collection = get_market_articles_collection()
+    if collection is None or not item_ids:
+        return {}
+
+    ticker_map: dict[int, list[str]] = {}
+    rows = collection.find(
+        {"item_id": {"$in": item_ids}},
+        {"item_id": 1, "tickers.symbol": 1},
+    )
+    for row in rows:
+        item_id = row.get("item_id")
+        if item_id is None:
+            continue
+        seen_symbols: set[str] = set()
+        symbols: list[str] = []
+        for ticker_row in row.get("tickers", []):
+            symbol = str(ticker_row.get("symbol", "")).upper().strip()
+            if not symbol or symbol in seen_symbols:
+                continue
+            seen_symbols.add(symbol)
+            symbols.append(symbol)
+        ticker_map[int(item_id)] = symbols
+    return ticker_map
+
+
 def _serialize_feed_item(
     *,
     item: Item,
@@ -66,17 +93,21 @@ def _serialize_feed_item(
     rank: int,
     short_reason: str,
     kw_map: dict[int, list[str]],
+    ticker_map: dict[int, list[str]],
     curation_action: str | None,
     preference_action: str | None,
 ) -> FeedItemOut:
+    link_disabled = source.type == SourceType.ALPACA_NEWS
     return FeedItemOut(
         item_id=item.id,
         title=item.title,
         translated_title_ko=item.translated_title_ko,
+        summary=item.summary,
         published_at=_published_at_str(item),
         source=source.name,
         category=source.category,
-        url=item.url,
+        url="" if link_disabled else item.url,
+        link_disabled=link_disabled,
         short_reason=short_reason,
         rank=rank,
         saved=(curation_action == FeedbackAction.SAVED.value),
@@ -87,6 +118,7 @@ def _serialize_feed_item(
         preference_action=preference_action,
         feedback_action=curation_action,
         keywords=kw_map.get(item.id, []),
+        tickers=ticker_map.get(item.id, []),
     )
 
 
@@ -136,6 +168,7 @@ def get_today_feed(
 
     item_ids = [item.id for _, item, *_ in rows]
     kw_map = _keyword_map(db, item_ids)
+    ticker_map = _market_ticker_map(item_ids)
     items = [
         _serialize_feed_item(
             item=item,
@@ -143,6 +176,7 @@ def get_today_feed(
             rank=feed_item.rank,
             short_reason=feed_item.short_reason,
             kw_map=kw_map,
+            ticker_map=ticker_map,
             curation_action=curation_action,
             preference_action=preference_action,
         )
@@ -188,6 +222,7 @@ def get_stock_feed(
 
     item_ids = [item.id for item, *_ in rows]
     kw_map = _keyword_map(db, item_ids)
+    ticker_map = _market_ticker_map(item_ids)
     items = [
         _serialize_feed_item(
             item=item,
@@ -195,6 +230,7 @@ def get_stock_feed(
             rank=rank,
             short_reason=_stock_item_reason(item, source),
             kw_map=kw_map,
+            ticker_map=ticker_map,
             curation_action=curation_action,
             preference_action=preference_action,
         )

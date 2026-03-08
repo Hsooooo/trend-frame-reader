@@ -62,6 +62,13 @@ DEFAULT_SOURCES: list[dict] = [
     },
     {
         "type": SourceType.RSS,
+        "name": "ReleaseWire Latest",
+        "url": "http://feeds.releasewire.com/rss/full/latest",
+        "category": "us-stock-news",
+        "weight": 0.95,
+    },
+    {
+        "type": SourceType.RSS,
         "name": "EDGAR 8-K Filings",
         "url": (
             "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent"

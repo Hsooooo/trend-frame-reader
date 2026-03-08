@@ -13,10 +13,12 @@ class FeedItemOut(BaseModel):
     item_id: int
     title: str
     translated_title_ko: str | None = None
+    summary: str | None = None
     published_at: str | None = None
     source: str
     category: str
     url: str
+    link_disabled: bool = False
     short_reason: str
     rank: int
     saved: bool
@@ -27,6 +29,7 @@ class FeedItemOut(BaseModel):
     preference_action: str | None = None
     feedback_action: str | None = None
     keywords: list[str] = []
+    tickers: list[str] = []
 
 
 class FeedCategoryGroup(BaseModel):

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models import Item, ItemKeyword, Job, Source, SourceType
-from app.services.feed_catalog import STOCK_FEED_CATEGORIES, is_stock_feed_category
+from app.services.feed_catalog import STOCK_FEED_CATEGORIES
 from app.services.market_graph import sync_market_article
 from app.services.keywords import extract_keywords, build_keyword_text
 from app.services.ranking import compute_score
@@ -54,8 +54,10 @@ def _insert_ingested_item(
     if canonical in seen_canonical:
         return False
 
-    exists = db.execute(select(Item.id).where(Item.canonical_url == canonical)).scalar_one_or_none()
-    if exists:
+    existing = db.execute(select(Item).where(Item.canonical_url == canonical)).scalar_one_or_none()
+    if existing:
+        _refresh_existing_item(db, item=existing, source=source, obj=obj)
+        seen_canonical.add(canonical)
         return False
 
     if _is_similar_title(db, obj["title"]):
@@ -63,7 +65,7 @@ def _insert_ingested_item(
 
     language = detect_language(obj["title"])
     translated_title_ko = None
-    if language != "ko" and not is_stock_feed_category(source.category):
+    if language != "ko":
         translated_title_ko = translate_title_to_korean(obj["title"])
 
     item = Item(
@@ -99,6 +101,45 @@ def _insert_ingested_item(
 
     seen_canonical.add(canonical)
     return True
+
+
+def _refresh_existing_item(
+    db: Session,
+    *,
+    item: Item,
+    source: Source,
+    obj: dict,
+) -> None:
+    updated = False
+
+    if not item.summary and obj.get("summary"):
+        item.summary = obj["summary"]
+        updated = True
+
+    published_at = obj.get("published_at")
+    if item.published_at is None and published_at is not None:
+        item.published_at = published_at
+        item.score = compute_score(source.weight, published_at)
+        updated = True
+
+    if item.language != "ko" and not item.translated_title_ko:
+        translated_title_ko = translate_title_to_korean(item.title)
+        if translated_title_ko:
+            item.translated_title_ko = translated_title_ko
+            updated = True
+
+    if not updated:
+        return
+
+    keywords = db.execute(
+        select(ItemKeyword.keyword)
+        .where(ItemKeyword.item_id == item.id)
+        .order_by(ItemKeyword.relevance_score.asc(), ItemKeyword.id.asc())
+    ).scalars().all()
+    try:
+        sync_market_article(item, source, list(keywords))
+    except Exception:
+        logger.warning("market graph sync failed for existing item_id=%s", item.id, exc_info=True)
 
 
 def _parse_hn_ts(ts: str | None):
