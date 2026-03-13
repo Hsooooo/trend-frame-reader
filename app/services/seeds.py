@@ -87,7 +87,7 @@ DEFAULT_SOURCES: list[dict] = [
         "category": "us-stock-filings",
         "weight": 1.0,
     },
-    {"type": SourceType.RSS, "name": "DW All (EN)", "url": "https://rss.dw.com/rdf/rss-en-all", "category": "world-politics", "weight": 1.0},
+    {"type": SourceType.RSS, "name": "DW All (EN)", "url": "https://rss.dw.com/rdf/rss-en-all", "category": "world-politics", "weight": 1.0, "enabled": False},
     {"type": SourceType.RSS, "name": "DW World", "url": "https://rss.dw.com/rdf/rss-en-world", "category": "world-politics", "weight": 1.0},
     {"type": SourceType.RSS, "name": "DW Business", "url": "https://rss.dw.com/rdf/rss-en-bus", "category": "world-economy", "weight": 1.0},
     {"type": SourceType.RSS, "name": "DW Science", "url": "https://rss.dw.com/xml/rss_en_science", "category": "ai", "weight": 1.0},
@@ -117,15 +117,22 @@ DEFAULT_SOURCES: list[dict] = [
     },
     {"type": SourceType.RSS, "name": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/", "category": "security", "weight": 1.0},
     {"type": SourceType.RSS, "name": "The Hacker News", "url": "https://feeds.feedburner.com/TheHackersNews", "category": "security", "weight": 1.0},
-    {"type": SourceType.RSS, "name": "MK 전체뉴스", "url": "https://www.mk.co.kr/rss/40300001/", "category": "korea-society", "weight": 1.0},
+    # -- Noise firehoses disabled: MK 전체뉴스, MBN 전체기사, MBN 사회 --
+    {"type": SourceType.RSS, "name": "MK 전체뉴스", "url": "https://www.mk.co.kr/rss/40300001/", "category": "korea-society", "weight": 1.0, "enabled": False},
     {"type": SourceType.RSS, "name": "MK 경제", "url": "https://www.mk.co.kr/rss/30100041/", "category": "korea-economy", "weight": 1.0},
     {"type": SourceType.RSS, "name": "MK 증권", "url": "https://www.mk.co.kr/rss/50200011/", "category": "korea-markets", "weight": 1.0},
     {"type": SourceType.RSS, "name": "MK 국제", "url": "https://www.mk.co.kr/rss/30300018/", "category": "world-politics", "weight": 1.0},
-    {"type": SourceType.RSS, "name": "MBN 전체기사", "url": "https://www.mbn.co.kr/rss/", "category": "korea-society", "weight": 1.0},
+    {"type": SourceType.RSS, "name": "MBN 전체기사", "url": "https://www.mbn.co.kr/rss/", "category": "korea-society", "weight": 1.0, "enabled": False},
     {"type": SourceType.RSS, "name": "MBN 정치", "url": "https://www.mbn.co.kr/rss/politics/", "category": "korea-politics", "weight": 1.0},
     {"type": SourceType.RSS, "name": "MBN 경제", "url": "https://www.mbn.co.kr/rss/economy/", "category": "korea-economy", "weight": 1.0},
-    {"type": SourceType.RSS, "name": "MBN 사회", "url": "https://www.mbn.co.kr/rss/society/", "category": "korea-society", "weight": 1.0},
+    {"type": SourceType.RSS, "name": "MBN 사회", "url": "https://www.mbn.co.kr/rss/society/", "category": "korea-society", "weight": 1.0, "enabled": False},
     {"type": SourceType.RSS, "name": "MBN 국제", "url": "https://www.mbn.co.kr/rss/international/", "category": "world-politics", "weight": 1.0},
+    # -- Quality Korean sources (curated/section feeds) --
+    {"type": SourceType.RSS, "name": "ZDNet Korea", "url": "https://zdnet.co.kr/rss/newsall.xml", "category": "korea-tech", "weight": 1.1},
+    {"type": SourceType.RSS, "name": "블로터", "url": "https://www.bloter.net/feed", "category": "korea-tech", "weight": 1.1},
+    {"type": SourceType.RSS, "name": "MK IT/과학", "url": "https://www.mk.co.kr/rss/50300009/", "category": "korea-tech", "weight": 1.05},
+    {"type": SourceType.RSS, "name": "한겨레 사설/칼럼", "url": "https://www.hani.co.kr/rss/editorials/", "category": "korea-politics", "weight": 1.05},
+    {"type": SourceType.RSS, "name": "조선비즈 IT/과학", "url": "https://biz.chosun.com/rss/itscience.xml", "category": "korea-tech", "weight": 1.05},
 ]
 
 
@@ -279,9 +286,11 @@ def sync_seed_sources(session: Session) -> dict:
                 if getattr(source, key) != row[key]:
                     setattr(source, key, row[key])
                     changed = True
+            # Only force-disable sources explicitly marked enabled=False in seed.
+            # Never re-enable a source that was manually disabled in DB.
             desired_enabled = row.get("enabled", True)
-            if source.enabled != desired_enabled:
-                source.enabled = desired_enabled
+            if not desired_enabled and source.enabled:
+                source.enabled = False
                 changed = True
             if changed:
                 updated += 1

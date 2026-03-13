@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     feed_max_items_total: int = 30
     ingestion_lookback_hours: int = 48
     title_similarity_threshold: float = 0.85
+    feed_noise_title_patterns: str = (
+        r"\[부음\]|\[부고\]|\[인사\]|\[동정\]"
+        r"|씨\s*(모친상|부친상|별세)"
+        r"|배타적사용권"
+        r"|캠페인\s*동참"
+    )
     rss_fetch_timeout_seconds: float = 20.0
     rss_fetch_user_agent: str = (
         "Mozilla/5.0 (compatible; TrendFrameReader/1.0; +https://running-pacer.p-e.kr)"

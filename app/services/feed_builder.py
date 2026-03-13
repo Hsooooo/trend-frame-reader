@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import timedelta
 import random
@@ -16,6 +17,17 @@ from app.services.events import CURATION_ACTIONS
 from app.services.utils import utcnow
 
 APP_TZ = ZoneInfo(settings.app_timezone)
+
+_noise_re: re.Pattern | None = None
+
+
+def _is_noise_title(title: str) -> bool:
+    """Return True if the title matches known noise patterns (obituaries, PR, etc.)."""
+    global _noise_re
+    if _noise_re is None:
+        pattern = settings.feed_noise_title_patterns.strip()
+        _noise_re = re.compile(pattern, re.IGNORECASE) if pattern else re.compile(r"(?!)")  # never match
+    return bool(_noise_re.search(title))
 
 
 def _reason(item: Item) -> str:
@@ -98,6 +110,8 @@ def generate_feed_for_slot(db: Session, slot: SlotType, user_id: int | None = No
 
         by_category: dict[str, list[Item]] = defaultdict(list)
         for item in items:
+            if _is_noise_title(item.title):
+                continue
             by_category[item.source.category].append(item)
 
         rng = random.Random()

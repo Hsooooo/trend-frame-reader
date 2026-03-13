@@ -79,7 +79,7 @@ def _insert_ingested_item(
         fetched_at=utcnow(),
         language=language,
         dedupe_key=title_key(obj["title"]),
-        score=compute_score(source.weight, obj.get("published_at")),
+        score=compute_score(source.weight, obj.get("published_at"), points=obj.get("points")),
     )
     db.add(item)
     db.flush()
@@ -119,7 +119,7 @@ def _refresh_existing_item(
     published_at = obj.get("published_at")
     if item.published_at is None and published_at is not None:
         item.published_at = published_at
-        item.score = compute_score(source.weight, published_at)
+        item.score = compute_score(source.weight, published_at, points=obj.get("points"))
         updated = True
 
     if item.language != "ko" and not item.translated_title_ko:
@@ -194,7 +194,12 @@ def _fetch_hn_items(limit: int = 80) -> list[dict]:
         title = h.get("title")
         if not link or not title:
             continue
-        out.append({"title": title, "url": link, "published_at": _parse_hn_ts(h.get("created_at"))})
+        out.append({
+            "title": title,
+            "url": link,
+            "published_at": _parse_hn_ts(h.get("created_at")),
+            "points": h.get("points") or 0,
+        })
     return out
 
 
